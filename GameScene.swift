@@ -2,8 +2,6 @@
 //  GameScene.swift
 //  TextTubes
 //
-//  Created by Braxton Smallwood on 3/27/24.
-//
 
 import SpriteKit
 import GameplayKit
@@ -30,149 +28,321 @@ extension UIColor {
     }
 }
 
-
-class RoundedTile: SKSpriteNode {
-    var letter: Character?
-    var originalPosition: CGPoint?
-    private var directionIndicator: SKLabelNode?
-    private var letterLabel: SKLabelNode? // Letter label property
-    private var liquidNode: SKSpriteNode? // Liquid node property
+// MARK: - Pipe Direction Enum
+enum PipeDirection {
+    case up, down, left, right
     
-    override var hash: Int {
-            return self.name?.hashValue ?? super.hash
+    var opposite: PipeDirection {
+        switch self {
+        case .up: return .down
+        case .down: return .up
+        case .left: return .right
+        case .right: return .left
         }
-    
-    override func isEqual(_ object: Any?) -> Bool {
-            guard let otherTile = object as? RoundedTile else { return false }
-            return self === otherTile
-        }
-
-    init(letter: Character?, color: UIColor, size: CGSize, cornerRadius: CGFloat) {
-        self.letter = letter
-        super.init(texture: nil, color: color, size: size)
-
-        // Create a shape node for masking
-        let shapeNode = SKShapeNode(rect: CGRect(origin: .zero, size: size), cornerRadius: cornerRadius)
-        shapeNode.fillColor = color
-        shapeNode.strokeColor = .clear
-
-        // Create the mask texture and apply to the sprite node
-        let texture = SKView().texture(from: shapeNode)!
-        self.texture = texture
-        self.color = .clear
-
-        // Set additional properties
-        self.zPosition = 0
-        self.originalPosition = .zero
-
-        // Initialize and add the liquid node first
-        setupLiquidNode(hexColor: "#8FCEF4", cornerRadius: 4.0)
-
-        // Create a letter label if the letter is not nil
-        if let letter = letter {
-            letterLabel = SKLabelNode(text: String(letter))
-            letterLabel!.fontColor = .black
-            letterLabel!.fontSize = size.height / 2
-            letterLabel!.verticalAlignmentMode = .center
-            letterLabel!.horizontalAlignmentMode = .center
-            letterLabel!.zPosition = 2 // Higher than liquid
-            self.addChild(letterLabel!)
-        }
-
-        // Initialize the direction indicator
-        directionIndicator = SKLabelNode()
-        directionIndicator?.fontName = "Arial"
-        directionIndicator?.fontSize = size.width / 3
-        directionIndicator?.fontColor = .black
-        directionIndicator?.position = CGPoint(x: 0, y: -size.height / 3)
-        directionIndicator?.zPosition = 3 // Higher than liquid and letter
-        self.addChild(directionIndicator!)
-    }
-
-    required init?(coder aDecoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    // Setup the liquid node with rounded corners
-    func setupLiquidNode(hexColor: String, cornerRadius: CGFloat) {
-        // Set the fill color using the provided hex code, falling back to a default purple if the conversion fails
-        let fillColor = UIColor(hex: hexColor) ?? .purple
-
-        // Create the liquid node
-        let liquidNode = SKSpriteNode(color: fillColor, size: self.size)
-        liquidNode.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        liquidNode.position = .zero
-        liquidNode.zPosition = 1 // Above the base but below the letter
-        liquidNode.xScale = 0.0 // Initially hidden
-
-        // Create a shape node for the mask with the correct anchor point
-        let maskShape = SKShapeNode(rectOf: self.size, cornerRadius: cornerRadius)
-        maskShape.position = .zero
-        maskShape.fillColor = .white // Mask should have a solid color
-        maskShape.strokeColor = .clear
-        maskShape.zPosition = 1
-
-        // Create the crop node and assign the mask to it
-        let maskCropNode = SKCropNode()
-        maskCropNode.maskNode = maskShape
-        maskCropNode.addChild(liquidNode)
-        maskCropNode.zPosition = 1
-
-        // Add the masked liquid node to the tile
-        self.addChild(maskCropNode)
-
-        // Store the liquid node itself in user data for future access
-        self.userData = NSMutableDictionary()
-        self.userData?.setValue(liquidNode, forKey: "liquidNode")
-    }
-
-
-
-    // Fill with liquid in a specified direction
-    func fillWithLiquid(direction: String, completion: @escaping () -> Void) {
-        guard let liquid = self.userData?.value(forKey: "liquidNode") as? SKSpriteNode else { return }
-
-        liquid.isHidden = false
-
-        switch direction {
-        case "→", "←":
-            liquid.yScale = 1.0
-            liquid.xScale = 0.0
-        case "↓", "↑":
-            liquid.xScale = 1.0
-            liquid.yScale = 0.0
-        default:
-            liquid.xScale = 0.0
-        }
-
-        switch direction {
-        case "→":
-            liquid.anchorPoint = CGPoint(x: 0, y: 0.5)
-            liquid.position = CGPoint(x: -self.size.width / 2, y: 0)
-        case "←":
-            liquid.anchorPoint = CGPoint(x: 1, y: 0.5)
-            liquid.position = CGPoint(x: self.size.width / 2, y: 0)
-        case "↓":
-            liquid.anchorPoint = CGPoint(x: 0.5, y: 1)
-            liquid.position = CGPoint(x: 0, y: self.size.height / 2)
-        case "↑":
-            liquid.anchorPoint = CGPoint(x: 0.5, y: 0)
-            liquid.position = CGPoint(x: 0, y: -self.size.height / 2)
-        default:
-            return
-        }
-
-        let fillAction: SKAction = (direction == "→" || direction == "←") ? SKAction.scaleX(to: 1.0, duration: 0.5) : SKAction.scaleY(to: 1.0, duration: 0.5)
-        liquid.run(fillAction, completion: completion)
-    }
-
-    // Update direction indicator
-    func addDirectionIndicator(direction: String) {
-        directionIndicator?.text = direction
     }
 }
 
+// MARK: - Pipe Type Enum
+enum PipeType {
+    case straight(PipeDirection)  // Vertical or horizontal straight pipe
+    case elbow(PipeDirection, PipeDirection)  // Corner pipe with two openings
+    case start(PipeDirection)  // Starting pipe (one opening)
+    case end(PipeDirection)  // Ending pipe (one opening)
+    
+    // Helper to check if a direction is an opening in this pipe
+    func hasOpening(in direction: PipeDirection) -> Bool {
+        switch self {
+        case .straight(let dir):
+            return dir == direction || dir.opposite == direction
+        case .elbow(let dir1, let dir2):
+            return dir1 == direction || dir2 == direction
+        case .start(let dir):
+            return dir == direction
+        case .end(let dir):
+            return dir == direction
+        }
+    }
+}
 
+// MARK: - Updated PipeTile class with improved visuals and logic
+
+class PipeTile: SKSpriteNode {
+    // Core properties
+    var letter: Character?
+    var originalPosition: CGPoint?
+    var pipeType: PipeType?
+    var isObstacle: Bool = false
+    
+    // UI elements
+    private var letterLabel: SKLabelNode?
+    private var pipeNode: SKShapeNode?
+    private var liquidNode: SKShapeNode?
+    private var cropNode: SKCropNode?
+    
+    // Constants for rendering
+    private let pipeLineWidth: CGFloat = 8.0 // Increased thickness
+    private let pipeColor = UIColor(hex: "#333333") ?? .darkGray
+    private let filledColor = UIColor(hex: "#FDE6BD") ?? .white
+    private let liquidColor = UIColor(hex: "#4F97C7") ?? .blue // Deeper blue for better visibility
+    
+    override var hash: Int {
+        return self.name?.hashValue ?? super.hash
+    }
+    
+    override func isEqual(_ object: Any?) -> Bool {
+        guard let otherTile = object as? PipeTile else { return false }
+        return self === otherTile
+    }
+    
+    init(letter: Character?, color: UIColor, size: CGSize, cornerRadius: CGFloat, pipeType: PipeType? = nil, isObstacle: Bool = false) {
+        self.letter = letter
+        self.pipeType = pipeType
+        self.isObstacle = isObstacle
+        super.init(texture: nil, color: .clear, size: size)
+        
+        // Create background with rounded corners
+        let background = SKShapeNode(rectOf: size, cornerRadius: cornerRadius)
+        background.fillColor = color
+        background.strokeColor = .gray
+        background.lineWidth = 1.0
+        background.position = .zero
+        self.addChild(background)
+        
+        // Add letter label
+        if let letter = letter {
+            letterLabel = SKLabelNode(text: String(letter))
+            letterLabel!.fontColor = .black
+            letterLabel!.fontSize = size.height / 2.5
+            letterLabel!.fontName = "ArialRoundedMTBold" // Better font
+            letterLabel!.verticalAlignmentMode = .center
+            letterLabel!.horizontalAlignmentMode = .center
+            letterLabel!.zPosition = 10 // Above the pipe
+            self.addChild(letterLabel!)
+        }
+        
+        // Only draw pipes if this isn't an obstacle tile
+        if !isObstacle && pipeType != nil {
+            // Draw the pipe shape
+            drawPipe(type: pipeType!, size: size)
+            
+            // Setup for liquid flow
+            setupLiquidNode(for: pipeType!, size: size, cornerRadius: cornerRadius)
+        }
+        
+        // Set additional properties
+        self.zPosition = 0
+        self.originalPosition = .zero
+    }
+    
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    // MARK: - Drawing Methods
+    
+    private func drawPipe(type: PipeType, size: CGSize) {
+        let halfWidth = size.width / 2
+        let halfHeight = size.height / 2
+        // Pipe takes up 40% of tile width for better proportions
+        let pipeWidth = size.width * 0.4
+        
+        pipeNode = SKShapeNode()
+        pipeNode?.strokeColor = pipeColor
+        pipeNode?.lineWidth = pipeLineWidth
+        pipeNode?.lineCap = .round  // Rounded ends
+        pipeNode?.lineJoin = .round // Rounded corners
+        pipeNode?.fillColor = .clear // No fill, just the stroke
+        pipeNode?.zPosition = 5
+        
+        // The path for the pipe shape
+        let path = UIBezierPath()
+        let insetFactor: CGFloat = 0.3 // How far to inset the pipe from the edge
+        
+        switch type {
+        case .straight(let direction):
+            if direction == .up || direction == .down {
+                // Vertical pipe
+                let topPoint = CGPoint(x: 0, y: halfHeight * (1 - insetFactor))
+                let bottomPoint = CGPoint(x: 0, y: -halfHeight * (1 - insetFactor))
+                path.move(to: bottomPoint)
+                path.addLine(to: topPoint)
+            } else {
+                // Horizontal pipe
+                let leftPoint = CGPoint(x: -halfWidth * (1 - insetFactor), y: 0)
+                let rightPoint = CGPoint(x: halfWidth * (1 - insetFactor), y: 0)
+                path.move(to: leftPoint)
+                path.addLine(to: rightPoint)
+            }
+            
+        case .elbow(let dir1, let dir2):
+            // Corner pipe
+            let startPoint = getEndpointForDirection(dir1.opposite, size: size, insetFactor: insetFactor)
+            let endPoint = getEndpointForDirection(dir2.opposite, size: size, insetFactor: insetFactor)
+            
+            path.move(to: startPoint)
+            // For smoother corners, we use quadratic curves instead of straight lines
+            let controlPoint = CGPoint.zero // Center of tile
+            
+            // Draw the path with a quadratic curve for smoother corners
+            path.move(to: startPoint)
+            path.addLine(to: controlPoint)
+            path.addLine(to: endPoint)
+            
+        case .start(let direction):
+            // Start cap - one opening (from center to edge)
+            let centerPoint = CGPoint.zero
+            let edgePoint = getEndpointForDirection(direction.opposite, size: size, insetFactor: insetFactor)
+            
+            // Draw a line from center to the edge
+            path.move(to: centerPoint)
+            path.addLine(to: edgePoint)
+            
+            // Add a filled circle at the center for the start bubble
+            let startNode = SKShapeNode(circleOfRadius: pipeWidth / 2)
+            startNode.fillColor = pipeColor
+            startNode.strokeColor = pipeColor
+            startNode.position = centerPoint
+            startNode.zPosition = 4
+            self.addChild(startNode)
+            
+        case .end(let direction):
+            // End cap - one opening (from edge to center)
+            let centerPoint = CGPoint.zero
+            let edgePoint = getEndpointForDirection(direction.opposite, size: size, insetFactor: insetFactor)
+            
+            // Draw a line from the edge to center
+            path.move(to: edgePoint)
+            path.addLine(to: centerPoint)
+            
+            // Add a filled circle at the center for the end bubble
+            let endNode = SKShapeNode(circleOfRadius: pipeWidth / 2)
+            endNode.fillColor = pipeColor
+            endNode.strokeColor = pipeColor
+            endNode.position = centerPoint
+            endNode.zPosition = 4
+            self.addChild(endNode)
+        }
+        
+        pipeNode?.path = path.cgPath
+        self.addChild(pipeNode!)
+    }
+    
+    private func getEndpointForDirection(_ direction: PipeDirection, size: CGSize, insetFactor: CGFloat) -> CGPoint {
+        let halfWidth = size.width / 2
+        let halfHeight = size.height / 2
+        
+        switch direction {
+        case .up:
+            return CGPoint(x: 0, y: halfHeight * (1 - insetFactor))
+        case .down:
+            return CGPoint(x: 0, y: -halfHeight * (1 - insetFactor))
+        case .left:
+            return CGPoint(x: -halfWidth * (1 - insetFactor), y: 0)
+        case .right:
+            return CGPoint(x: halfWidth * (1 - insetFactor), y: 0)
+        }
+    }
+    
+    // MARK: - Liquid Animation Setup
+    
+    private func setupLiquidNode(for pipeType: PipeType, size: CGSize, cornerRadius: CGFloat) {
+        // Create the liquid node (initially hidden)
+        liquidNode = SKShapeNode()
+        liquidNode?.fillColor = .clear
+        liquidNode?.strokeColor = liquidColor
+        liquidNode?.lineWidth = pipeLineWidth * 0.8 // Slightly thinner than the pipe
+        liquidNode?.lineCap = .round
+        liquidNode?.lineJoin = .round
+        liquidNode?.alpha = 0.9
+        liquidNode?.zPosition = 6 // Above the pipe but below the letter
+        liquidNode?.isHidden = true
+        
+        // Create the path that matches the pipe path
+        liquidNode?.path = pipeNode?.path
+        
+        self.addChild(liquidNode!)
+    }
+    
+    // MARK: - Liquid Animation
+    
+    func fillWithLiquid(duration: TimeInterval = 0.6, completion: @escaping () -> Void) {
+        guard !isObstacle, let pipeType = self.pipeType else {
+            completion()
+            return
+        }
+        
+        liquidNode?.isHidden = false
+        liquidNode?.removeAllActions()
+        
+        // Set initial state - transparent
+        liquidNode?.alpha = 0.0
+        
+        // Simple fade-in animation for the liquid
+        let fadeIn = SKAction.fadeAlpha(to: 0.9, duration: duration)
+        
+        // For start/end pipe types, we add a center bubble animation
+        if case .start = pipeType {
+            // Create a bubble at the center for start pipe
+            addBubbleAnimation(duration: duration)
+        } else if case .end = pipeType {
+            // Create a bubble at the center for end pipe
+            addBubbleAnimation(duration: duration)
+        }
+        
+        // Run the animation
+        liquidNode?.run(fadeIn) {
+            completion()
+        }
+    }
+
+    // Helper method to create the bubble animation
+    private func addBubbleAnimation(duration: TimeInterval) {
+        // Create a bubble at the center
+        let bubbleNode = SKShapeNode(circleOfRadius: pipeLineWidth * 0.4)
+        bubbleNode.fillColor = liquidColor
+        bubbleNode.strokeColor = liquidColor
+        bubbleNode.position = .zero
+        bubbleNode.zPosition = 7
+        bubbleNode.alpha = 0
+        self.addChild(bubbleNode)
+        
+        // Animate the bubble
+        let bubbleFadeIn = SKAction.fadeIn(withDuration: duration * 0.5)
+        bubbleNode.run(bubbleFadeIn)
+    }
+    
+    // Helper to calculate the total length of a path
+    private func calculatePathLength(_ path: CGPath) -> CGFloat {
+        var pathLength: CGFloat = 0
+        var start = CGPoint.zero
+        var hasStartPoint = false
+        
+        path.applyWithBlock { elementPtr in
+            let element = elementPtr.pointee
+            
+            switch element.type {
+            case .moveToPoint:
+                let point = element.points[0]
+                start = point
+                hasStartPoint = true
+            case .addLineToPoint:
+                if hasStartPoint {
+                    let point = element.points[0]
+                    let dx = point.x - start.x
+                    let dy = point.y - start.y
+                    pathLength += sqrt(dx*dx + dy*dy)
+                    start = point
+                }
+            case .closeSubpath:
+                break
+            default:
+                break
+            }
+        }
+        
+        return max(pathLength, 10.0) // Ensure we have at least some length
+    }
+}
 
 struct GridPosition {
     var row: Int
@@ -187,13 +357,13 @@ class GameScene: SKScene {
     let numTrayColumns = 5
     let gridPadding: CGFloat = 20.0 // Padding around the entire grid
     let topPadding: CGFloat = 80.0 // Padding at top of grid
-    var activeTile: RoundedTile?
+    var activeTile: PipeTile?
     let snapThreshold: CGFloat = 100.0 // Adjust based on your needs
     var puzzleWord: String = ""
     var puzzleWordLabel: SKLabelNode?
-    var grid: [[RoundedTile?]] = [] // Represents the grid where nil indicates an empty square
+    var grid: [[PipeTile?]] = [] // Represents the grid where nil indicates an empty square
     var path: [GridPosition] = [] // Path taken by the word through the grid
-    var unplacedTiles: Set<RoundedTile> = Set()
+    var unplacedTiles: Set<PipeTile> = Set()
 
     
     override func sceneDidLoad() {
@@ -205,13 +375,15 @@ class GameScene: SKScene {
         }
 
         setupGrid()
-   //     initializeTileTray()
         addResetButton()
         addNewGameButton()
         addShowWordButton()
         createPuzzleWordLabel()
         initializeGrid()
         addCheckSolutionButton()
+        
+        // Start a new game to generate the initial puzzle
+        startNewGame()
     }
 
 
@@ -247,49 +419,6 @@ class GameScene: SKScene {
         }
     }
 
-    // End grid setup code
-
-    //Tile tray setup
-    
-    func initializeTileTray() {
-        let tileSize = self.tileSize()
-        let trayPadding: CGFloat = 30.0 // Padding on the edges of the tray
-        let spacing: CGFloat = 5.0 // Space between tiles
-        let tilesPerRow = min(4, puzzleWord.count) // Up to 5 tiles per row
-
-        // Calculate starting positions
-        let totalRowWidth = CGFloat(tilesPerRow) * tileSize.width + CGFloat(tilesPerRow - 1) * spacing
-        let startingX = (self.size.width - totalRowWidth) / 2 + trayPadding // Center tray horizontally with padding
-        let startingY: CGFloat = 275.0 // Position of the first tray row from the bottom of the screen
-        
-        // Shuffle the letters in the puzzle word
-        let shuffledLetters = puzzleWord.shuffled()
-
-        for (index, letter) in shuffledLetters.enumerated() {
-            let tile = RoundedTile(letter: letter, color: .white, size: tileSize, cornerRadius: 4.0)
-            tile.letter = letter
-            let label = SKLabelNode(text: String(letter))
-            label.fontColor = SKColor.black
-            label.fontSize = tileSize.height / 2 // Adjust font size based on tile size
-            label.verticalAlignmentMode = .center
-            label.horizontalAlignmentMode = .center
-            tile.addChild(label) // Add the letter label to the tile
-            
-            tile.setupLiquidNode(hexColor: "#8FCEF4", cornerRadius: 4.0)
-
-            let row = index / tilesPerRow
-            let column = index % tilesPerRow
-            let positionX = startingX + (tileSize.width + spacing) * CGFloat(column)
-            let positionY = startingY - (tileSize.height + spacing) * CGFloat(row)
-            tile.position = CGPoint(x: positionX, y: positionY)
-            tile.originalPosition = tile.position // Storing original tile position
-            
-            unplacedTiles.insert(tile)
-            self.addChild(tile)
-        }
-    }
-    // End tile tray setup
-    
     // WordList
     func loadWordsFromFile() -> [String]? {
         guard let filePath = Bundle.main.path(forResource: "WordList", ofType: "txt") else {
@@ -307,7 +436,6 @@ class GameScene: SKScene {
             return nil
         }
     }
-    // End word list
 
     // Snap to grid code
     func positionForGridCell(row: Int, column: Int) -> CGPoint {
@@ -336,7 +464,6 @@ class GameScene: SKScene {
         
         return closestCell
     }
-    // End snap to grid functionality
     
     // Add reset button
     func addResetButton() {
@@ -354,7 +481,7 @@ class GameScene: SKScene {
     func resetTilesToOriginalPositions() {
         // Loop through all child nodes and reset their positions if they are Tiles
         for node in self.children {
-            if let tile = node as? RoundedTile, let originalPosition = tile.originalPosition {
+            if let tile = node as? PipeTile, let originalPosition = tile.originalPosition {
                 tile.position = originalPosition // Reset to the original position
             }
         }
@@ -362,8 +489,6 @@ class GameScene: SKScene {
         // Update the logical grid with the original positions of the tiles
         updateLogicalGridFromVisualPositions()
     }
-
-    // End reset button
     
     // Add show word button
     func addShowWordButton() {
@@ -386,8 +511,6 @@ class GameScene: SKScene {
         self.addChild(label)
         puzzleWordLabel = label
     }
-
-    // End show word button
     
     // New Game code
     func addNewGameButton() {
@@ -412,20 +535,20 @@ class GameScene: SKScene {
 
         // Clear existing tiles
         self.children.forEach { node in
-            if node is RoundedTile {
+            if node is PipeTile {
                 node.removeFromParent()
             }
         }
 
         // Generate new tiles
-    //    initializeTileTray()
         resetGrid()
         generatePath(for: puzzleWord)
-        placeTiles(for: puzzleWord)
-        updateTileDirections()
+        placeTilesWithPipes(for: puzzleWord)
         placeObstacleTiles(count: 5)
+        
+        // Hide the puzzle word when starting a new game
+        puzzleWordLabel?.isHidden = true
     }
-    // End New Game code
     
     // Word Path generation
     func generatePath(for word: String) {
@@ -475,15 +598,104 @@ class GameScene: SKScene {
         }
     }
 
-
-    func placeTiles(for word: String) {
+    // MARK: - Pipe system implementation
+    
+    // Determine which pipe type should be used based on the word path
+    func determinePipeType(for position: GridPosition, in path: [GridPosition]) -> PipeType {
+        // Find the index of this position in the path
+        guard let index = path.firstIndex(where: { $0.row == position.row && $0.column == position.column }) else {
+            return .straight(.up) // Default if not found (shouldn't happen)
+        }
+        
+        // First position (start cap)
+        if index == 0 {
+            if path.count > 1 {
+                let nextPos = path[1]
+                // Direction FROM this position TO the next (not the other way around)
+                let direction = determineOutgoingDirection(from: position, to: nextPos)
+                return .start(direction)
+            } else {
+                return .start(.right) // Default direction if there's only one position
+            }
+        }
+        
+        // Last position (end cap)
+        if index == path.count - 1 {
+            let prevPos = path[index - 1]
+            // Direction FROM previous position TO this one
+            let direction = determineOutgoingDirection(from: prevPos, to: position)
+            return .end(direction)
+        }
+        
+        // Middle positions
+        let prevPos = path[index - 1]
+        let nextPos = path[index + 1]
+        
+        // Direction coming INTO this position (from previous)
+        let inDirection = determineOutgoingDirection(from: prevPos, to: position)
+        // Direction going OUT of this position (to next)
+        let outDirection = determineOutgoingDirection(from: position, to: nextPos)
+        
+        // If the in and out directions are opposites, it's a straight pipe
+        if inDirection.opposite == outDirection {
+            if inDirection == .up || inDirection == .down {
+                return .straight(.up) // Vertical pipe
+            } else {
+                return .straight(.right) // Horizontal pipe
+            }
+        }
+        
+        // Otherwise it's an elbow - note we pass the direction the flow comes IN from
+        // and the direction the flow goes OUT to
+        return .elbow(inDirection.opposite, outDirection)
+    }
+    
+    func determineOutgoingDirection(from: GridPosition, to: GridPosition) -> PipeDirection {
+        if to.column > from.column { return .right }
+        else if to.column < from.column { return .left }
+        else if to.row > from.row { return .down } // Remember grid is 0,0 at top-left
+        else { return .up }
+    }
+    
+    // Convert text direction to PipeDirection
+    func toPipeDirection(_ textDirection: String) -> PipeDirection {
+        switch textDirection {
+        case "→": return .right
+        case "←": return .left
+        case "↑": return .up
+        case "↓": return .down
+        default: return .right // Default
+        }
+    }
+    
+    // Convert grid direction to PipeDirection
+    func determineDirectionAsPipe(from: GridPosition, to: GridPosition) -> PipeDirection {
+        if to.column > from.column { return .right }
+        else if to.column < from.column { return .left }
+        else if to.row > from.row { return .down }
+        else { return .up }
+    }
+    
+    // Replace original direction method to be compatible with the pipe system
+    func determineDirection(from: GridPosition, to: GridPosition) -> String {
+        if to.column > from.column { return "→" }
+        else if to.row > from.row { return "↓" }
+        else if to.row < from.row { return "↑" }
+        return "←" // Default to left if no other condition is met
+    }
+    
+    // Place tiles with pipes for the word
+    func placeTilesWithPipes(for word: String) {
         // Predefine hex colors for start, end, and other tiles
         let startTileColor = UIColor(hex: "#54A37D") ?? .green  // Green
         let endTileColor = UIColor(hex: "#E27378") ?? .red     // Red
         let normalTileColor = UIColor(hex: "#FDE6BD") ?? .white // White
         
-        var tilesWithDirections: [RoundedTile] = []
+        var tilesWithPipes: [PipeTile] = []
         let letters = Array(word)
+        
+        // Reset unplaced tiles set
+        unplacedTiles.removeAll()
         
         for (index, gridPosition) in path.enumerated() {
             // Determine the color based on tile type
@@ -496,25 +708,13 @@ class GameScene: SKScene {
                 tileColor = normalTileColor
             }
 
-            // Create the tile with the selected color
+            // Determine the pipe type for this position
+            let pipeType = determinePipeType(for: gridPosition, in: path)
+            
+            // Create the tile with the determined pipe type
             let letter = letters[index]
-            let tile = RoundedTile(letter: letter, color: tileColor, size: tileSize(), cornerRadius: 4.0)
+            let tile = PipeTile(letter: letter, color: tileColor, size: tileSize(), cornerRadius: 4.0, pipeType: pipeType)
             tile.letter = letters[index]
-
-            // Add a letter label to the tile
-            let label = SKLabelNode(text: String(letters[index]))
-            label.fontColor = .black
-            label.fontSize = tileSize().height / 2
-            label.verticalAlignmentMode = .center
-            label.horizontalAlignmentMode = .center
-            tile.addChild(label)
-
-            // Add direction indicators for tiles with a following path
-            if index < path.count - 1 {
-                let nextPos = path[index + 1]
-                let direction = determineDirection(from: gridPosition, to: nextPos)
-                tile.addDirectionIndicator(direction: direction)
-            }
 
             // Place the first tile directly on the board and mark it as immovable
             if index == 0 {
@@ -523,23 +723,24 @@ class GameScene: SKScene {
                 self.addChild(tile)
                 tile.originalPosition = tilePosition
                 grid[gridPosition.row][gridPosition.column] = tile
-                tile.userData = ["immovable": true]
+                tile.userData = NSMutableDictionary()
+                tile.userData?.setValue(true, forKey: "immovable")
             } else {
-                tilesWithDirections.append(tile)
+                tilesWithPipes.append(tile)
+                unplacedTiles.insert(tile) // Track unplaced tiles
             }
         }
 
         // Shuffle and place the remaining tiles in the tray
-        tilesWithDirections.shuffle()
-        for (index, tile) in tilesWithDirections.enumerated() {
+        tilesWithPipes.shuffle()
+        for (index, tile) in tilesWithPipes.enumerated() {
             let position = calculateTrayPosition(index: index, tileSize: tileSize(), trayPadding: 30.0, spacing: 5.0, tilesPerRow: min(4, puzzleWord.count))
             tile.position = CGPoint(x: position.x, y: position.y)
             tile.originalPosition = position
             self.addChild(tile)
         }
     }
-
-
+    
     // Helper function to calculate tray positions
     func calculateTrayPosition(index: Int, tileSize: CGSize, trayPadding: CGFloat, spacing: CGFloat, tilesPerRow: Int) -> CGPoint {
         let totalRowWidth = CGFloat(tilesPerRow) * tileSize.width + CGFloat(tilesPerRow - 1) * spacing
@@ -551,69 +752,8 @@ class GameScene: SKScene {
         let y = startingY - (tileSize.height + spacing) * CGFloat(row)
         return CGPoint(x: x, y: y)
     }
-
-
-    // Helper function to determine direction
-    func determineDirection(from: GridPosition, to: GridPosition) -> String {
-        if to.column > from.column { return "→" }
-        else if to.row > from.row { return "↓" }
-        else if to.row < from.row { return "↑" }
-        return "←" // Default to left if no other condition is met
-    }
-
     
-    func updateTileDirections() {
-        for i in 0..<path.count - 1 {
-            let currentPosition = path[i]
-            let nextPosition = path[i + 1]
-
-            let direction: String
-            if nextPosition.column > currentPosition.column {
-                direction = "→"
-            } else if nextPosition.column < currentPosition.column {
-                direction = "←"
-            } else if nextPosition.row > currentPosition.row {
-                direction = "↓"
-            } else {
-                direction = "↑"
-            }
-
-            if let tile = grid[currentPosition.row][currentPosition.column] {
-                tile.addDirectionIndicator(direction: direction)
-            }
-        }
-        // Optionally, remove the indicator from the last tile, as it's the end of the word
-        if let lastPosition = path.last, let lastTile = grid[lastPosition.row][lastPosition.column] {
-            lastTile.addDirectionIndicator(direction: "")
-        }
-    }
-    
-    func printGridPath() {
-        for row in 0..<numGridRows {
-            var rowString = ""
-            for column in 0..<numGridColumns {
-                if let tile = grid[row][column], let letter = tile.letter {
-                    // If it's the first or last tile, you can use special characters or just use the letter
-                    if tile.userData?["immovable"] as? Bool ?? false {
-                        rowString += "[\(letter)]" // Brackets to indicate immovable tiles
-                    } else {
-                        rowString += " \(letter) "
-                    }
-                } else {
-                    // Placeholder for empty spaces or obstacles
-                    rowString += " . "
-                }
-            }
-            print(rowString)
-        }
-        print("\n") // Extra line for better separation
-    }
-
-    
-    // End Word Path Generation Code
-    
-    // Start Obstacle Code
-    
+    // Obstacle placement
     func placeObstacleTiles(count: Int) {
         var availablePositions: [GridPosition] = []
 
@@ -633,21 +773,21 @@ class GameScene: SKScene {
 
         // Place obstacle tiles
         for position in obstaclePositions {
-            let obstacleTile = RoundedTile(letter: nil, color: .brown, size: tileSize(), cornerRadius: 4.0)
+            // Create obstacle tile without any pipe type and mark as obstacle
+            let obstacleTile = PipeTile(letter: nil, color: .brown, size: tileSize(), cornerRadius: 4.0, isObstacle: true)
             obstacleTile.position = positionForGridCell(row: position.row, column: position.column)
             self.addChild(obstacleTile)
-            // Mark the tile as immovable
-            obstacleTile.userData = ["immovable": true]
             
-            // Optionally, if using an array to track tiles, add the obstacle tile to the grid
+            // Mark the tile as immovable
+            obstacleTile.userData = NSMutableDictionary()
+            obstacleTile.userData?.setValue(true, forKey: "immovable")
+            
+            // Add the obstacle tile to the grid
             grid[position.row][position.column] = obstacleTile
         }
     }
-
-    // End Obstacle Code
     
-    // Solution Validation
-    
+    // Solution validation and animation
     func checkSolution() -> Bool {
         // Ensure the path and the grid match the puzzle word
         var currentWord = ""
@@ -666,7 +806,7 @@ class GameScene: SKScene {
         
         // Check if the constructed word matches the puzzle word
         if currentWord == puzzleWord {
-            animateSolution()
+            animateSolutionWithPipes()
             print("Solution is correct!")
             return true
         } else {
@@ -674,7 +814,6 @@ class GameScene: SKScene {
             return false
         }
     }
-
     
     func isSolutionValid() -> Bool {
         let letters = Array(puzzleWord)
@@ -695,7 +834,6 @@ class GameScene: SKScene {
         return true // All tiles are correctly placed
     }
 
-
     func addCheckSolutionButton() {
         let checkButton = SKLabelNode(fontNamed: "Arial")
         checkButton.text = "Check Solution"
@@ -706,12 +844,14 @@ class GameScene: SKScene {
         self.addChild(checkButton)
     }
     
-    func moveTile(tile: RoundedTile, to position: GridPosition) -> Bool {
+    func moveTile(tile: PipeTile, to position: GridPosition) -> Bool {
         // Check if the target position is already occupied or contains an obstacle
-        if let existingTile = grid[position.row][position.column], existingTile.userData?["immovable"] as? Bool == true {
-            // Tile cannot be moved to this cell
-            print("Cannot move to an obstacle or immovable tile at \(position).")
-            return false
+        if let existingTile = grid[position.row][position.column] {
+            if existingTile.userData?.value(forKey: "immovable") as? Bool == true {
+                // Tile cannot be moved to this cell
+                print("Cannot move to an obstacle or immovable tile at \(position).")
+                return false
+            }
         }
 
         // Remove the tile from its previous position
@@ -725,17 +865,16 @@ class GameScene: SKScene {
         
         unplacedTiles.remove(tile)
 
-           // Check if all tiles have been placed
-           if unplacedTiles.isEmpty {
-              _ = checkSolution()
-           }
+        // Check if all tiles have been placed
+        if unplacedTiles.isEmpty {
+            _ = checkSolution()
+        }
         
         return true
     }
-
-
+    
     // Helper function to find a tile's current position in the grid
-    func findTilePosition(tile: RoundedTile) -> GridPosition? {
+    func findTilePosition(tile: PipeTile) -> GridPosition? {
         for row in 0..<numGridRows {
             for column in 0..<numGridColumns {
                 if grid[row][column] === tile {
@@ -747,10 +886,9 @@ class GameScene: SKScene {
     }
     
     func resetGrid() {
-        // Assuming `grid` is defined as [[Tile?]] or a similar structure
+        // Reset the grid array
         grid = Array(repeating: Array(repeating: nil, count: numGridColumns), count: numGridRows)
     }
-
     
     func gridPosition(from visualPosition: CGPoint) -> GridPosition? {
         // Assuming tiles are placed from the top down with consistent spacing
@@ -775,69 +913,71 @@ class GameScene: SKScene {
             return nil // Position falls outside the grid
         }
     }
-
-
-
-
+    
     func updateLogicalGridFromVisualPositions() {
         // Reset the logical grid
         self.initializeGrid()
         
         self.children.forEach { node in
-            if let tile = node as? RoundedTile, let visualPosition = tile.position as CGPoint? {
+            if let tile = node as? PipeTile, let visualPosition = tile.position as CGPoint? {
                 if let gridPosition = self.gridPosition(from: visualPosition) {
                     grid[gridPosition.row][gridPosition.column] = tile
                 }
             }
         }
     }
-
-    // Visual pizzazz
     
-    func prepareTilesForAnimation() {
-        for position in path {
-            if let tile = grid[position.row][position.column] {
-                tile.setupLiquidNode(hexColor: "#8FCEF4", cornerRadius: 4.0) // Prepare each tile with a liquid node
-            }
-        }
-    }
-
-    func animateSolution() {
-        // Ensure liquid nodes are set up
-        prepareTilesForAnimation()
-
-        var index = 0 // Keep track of the index in the path
-
+    // Modified animation solution to use the pipe-based animation
+    func animateSolutionWithPipes() {
+        var index = 0
+        let totalDuration: TimeInterval = 0.6 // Duration for each tile
+        
         func animateNextTile() {
-            guard index < path.count else { return } // Ensure there are more tiles to animate
-
+            guard index < path.count else { return } // End of path reached
+            
             let position = path[index]
-            if let tile = grid[position.row][position.column] {
-                // Determine the fill direction based on the previous tile's direction, except for the first tile
-                let fillDirection: String
-                if index == 0 {
-                    // For the first tile, use its own direction
-                    fillDirection = determineDirection(from: position, to: path[min(index + 1, path.count - 1)])
-                } else {
-                    // For subsequent tiles, use the direction of the previous tile towards the current one
-                    fillDirection = determineDirection(from: path[index - 1], to: position)
-                }
-
-                tile.fillWithLiquid(direction: fillDirection) {
-                    // Proceed to next tile after animation completes
-                    index += 1
-                    animateNextTile()
-                }
+            guard let tile = grid[position.row][position.column] as? PipeTile else {
+                index += 1
+                animateNextTile()
+                return
+            }
+            
+            // Animate the liquid flow with the simplified method
+            tile.fillWithLiquid(duration: totalDuration) {
+                index += 1
+                animateNextTile()
             }
         }
-
-        animateNextTile() // Start the animation chain
+        
+        // Start a small delay before animation begins
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            animateNextTile() // Start the animation chain
+        }
     }
-
-
     
-    // Update touch event methods for your game's drag-and-drop logic
+    // Debug function to print the current grid layout
+    func printGridPath() {
+        for row in 0..<numGridRows {
+            var rowString = ""
+            for column in 0..<numGridColumns {
+                if let tile = grid[row][column], let letter = tile.letter {
+                    // If it's the first or last tile, you can use special characters or just use the letter
+                    if tile.userData?["immovable"] as? Bool ?? false {
+                        rowString += "[\(letter)]" // Brackets to indicate immovable tiles
+                    } else {
+                        rowString += " \(letter) "
+                    }
+                } else {
+                    // Placeholder for empty spaces or obstacles
+                    rowString += " . "
+                }
+            }
+            print(rowString)
+        }
+        print("\n") // Extra line for better separation
+    }
     
+    // Touch event methods
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
         let location = touch.location(in: self)
@@ -858,19 +998,19 @@ class GameScene: SKScene {
                 printGridPath()
                 break
             } else if node.name == "newGameButton" {
-                // Handle new game button action...
+                // Handle new game button action
                 startNewGame()
                 // Optionally hide the puzzle word when starting a new game
                 puzzleWordLabel?.isHidden = true
             } else if node.name == "resetButton" {
-                // Handle reset button action...
+                // Handle reset button action
                 resetTilesToOriginalPositions()
             } else if node.name == "showWordButton" {
                 if let label = puzzleWordLabel {
                     label.text = puzzleWord // Update text to the current puzzle word
                     label.isHidden.toggle() // Toggle visibility
                 }
-            } else if let tile = node as? RoundedTile {
+            } else if let tile = node as? PipeTile {
                 // Check if the tile is immovable before setting it as active
                 if tile.userData?["immovable"] as? Bool ?? false {
                     print("This tile is immovable.")
@@ -882,9 +1022,6 @@ class GameScene: SKScene {
             }
         }
     }
-
-
-    
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let tile = activeTile else { return }
@@ -908,15 +1045,10 @@ class GameScene: SKScene {
         activeTile = nil // Stop tracking the tile
     }
 
-
-
-
-
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         activeTile?.zPosition = 0 // Reset zPosition if changed
         activeTile = nil // Stop tracking the tile
     }
-
     
     override func update(_ currentTime: TimeInterval) {
         // Your game's frame-by-frame logic, if needed
