@@ -53,12 +53,16 @@ enum PipeType {
     func hasOpening(in direction: PipeDirection) -> Bool {
         switch self {
         case .straight(let dir):
+            // A straight pipe has openings in the direction and its opposite
             return dir == direction || dir.opposite == direction
         case .elbow(let dir1, let dir2):
+            // An elbow pipe has openings in exactly the two specified directions
             return dir1 == direction || dir2 == direction
         case .start(let dir):
+            // A start pipe has an opening in the specified direction
             return dir == direction
         case .end(let dir):
+            // An end pipe has an opening in the specified direction
             return dir == direction
         }
     }
@@ -76,14 +80,21 @@ class PipeTile: SKSpriteNode {
     // UI elements
     private var letterLabel: SKLabelNode?
     private var pipeNode: SKShapeNode?
+    private var extendedPipeNode: SKShapeNode? // New pipe node for extended state
     private var liquidNode: SKShapeNode?
     private var cropNode: SKCropNode?
+    private var letterBackground: SKShapeNode?
     
     // Constants for rendering
-    private let pipeLineWidth: CGFloat = 8.0 // Increased thickness
-    private let pipeColor = UIColor(hex: "#333333") ?? .darkGray
+    private let pipeLineWidth: CGFloat = 40.0
+    private let pipeColor = UIColor(hex: "#595d58") ?? UIColor(red: 0.54, green: 0.56, blue: 0.57, alpha: 1.0)
     private let filledColor = UIColor(hex: "#FDE6BD") ?? .white
-    private let liquidColor = UIColor(hex: "#4F97C7") ?? .blue // Deeper blue for better visibility
+    private let liquidColor = UIColor(hex: "#4F97C7") ?? .blue
+    
+    // For contained vs extended state
+    private var isExtended: Bool = false
+    private let containedInsetFactor: CGFloat = 0.0 // Higher value = more contained
+    private let extendedInsetFactor: CGFloat = -0.15 // Lower value = more extended
     
     override var hash: Int {
         return self.name?.hashValue ?? super.hash
@@ -100,33 +111,24 @@ class PipeTile: SKSpriteNode {
         self.isObstacle = isObstacle
         super.init(texture: nil, color: .clear, size: size)
         
-        // Create background with rounded corners
-        let background = SKShapeNode(rectOf: size, cornerRadius: cornerRadius)
-        background.fillColor = color
-        background.strokeColor = .gray
-        background.lineWidth = 1.0
-        background.position = .zero
-        self.addChild(background)
-        
-        // Add letter label
-        if let letter = letter {
-            letterLabel = SKLabelNode(text: String(letter))
-            letterLabel!.fontColor = .black
-            letterLabel!.fontSize = size.height / 2.5
-            letterLabel!.fontName = "ArialRoundedMTBold" // Better font
-            letterLabel!.verticalAlignmentMode = .center
-            letterLabel!.horizontalAlignmentMode = .center
-            letterLabel!.zPosition = 10 // Above the pipe
-            self.addChild(letterLabel!)
-        }
+        // Create enhanced background with rounded corners - simple but refined
+        createEnhancedBackground(color: color, size: size, cornerRadius: cornerRadius)
         
         // Only draw pipes if this isn't an obstacle tile
         if !isObstacle && pipeType != nil {
-            // Draw the pipe shape
-            drawPipe(type: pipeType!, size: size)
+            // Draw the contained pipe shape initially
+            drawPipe(type: pipeType!, size: size, isExtended: false)
             
-            // Setup for liquid flow
+            // Also create the extended pipe node (initially hidden)
+            createExtendedPipe(type: pipeType!, size: size)
+            
+            // Setup for liquid flow (initially based on contained pipe)
             setupLiquidNode(for: pipeType!, size: size, cornerRadius: cornerRadius)
+        }
+        
+        // Add letter with clean, simple background
+        if let letter = letter {
+            addCleanLetterDisplay(letter: letter, size: size)
         }
         
         // Set additional properties
@@ -138,138 +140,465 @@ class PipeTile: SKSpriteNode {
         fatalError("init(coder:) has not been implemented")
     }
     
+    // MARK: - Color Helper Methods
+
+    // Helper to lighten a color
+    private func lighten(_ color: UIColor, by percentage: CGFloat) -> UIColor {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        
+        return UIColor(
+            red: min(red + percentage, 1.0),
+            green: min(green + percentage, 1.0),
+            blue: min(blue + percentage, 1.0),
+            alpha: alpha
+        )
+    }
+
+    // Helper to darken a color
+    private func darken(_ color: UIColor, by percentage: CGFloat) -> UIColor {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        
+        return UIColor(
+            red: max(red - percentage, 0.0),
+            green: max(green - percentage, 0.0),
+            blue: max(blue - percentage, 0.0),
+            alpha: alpha
+        )
+    }
+
+    // Helper to determine if a color is dark
+    private func isDarkColor(_ color: UIColor) -> Bool {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        
+        let brightness = ((red * 299) + (green * 587) + (blue * 114)) / 1000
+        return brightness < 0.6
+    }
+    
+    private func createEnhancedBackground(color: UIColor, size: CGSize, cornerRadius: CGFloat) {
+        // Create main background with rounded corners
+        let background = SKShapeNode(rectOf: size, cornerRadius: cornerRadius)
+        background.fillColor = color
+        background.strokeColor = darken(color, by: 0.15) // Darker outline for definition
+        background.lineWidth = 1.5
+        background.position = .zero
+        background.zPosition = 0
+        self.addChild(background)
+        
+        // Add a subtle top highlight for a very slight 3D effect
+        let highlight = SKShapeNode()
+        let path = UIBezierPath()
+        
+        // Create an arc just at the top of the tile
+        let topY = size.height / 2 - cornerRadius - 1
+        let leftX = -size.width / 2 + cornerRadius + 1
+        let rightX = size.width / 2 - cornerRadius - 1
+        
+        path.move(to: CGPoint(x: leftX, y: topY))
+        path.addLine(to: CGPoint(x: rightX, y: topY))
+        
+        highlight.path = path.cgPath
+        highlight.strokeColor = lighten(color, by: 0.2) // Lighter color for highlight
+        highlight.lineWidth = 1.5
+        highlight.alpha = 0.5 // Very subtle
+        highlight.zPosition = 2
+        self.addChild(highlight)
+    }
+    
+    private func addCleanLetterDisplay(letter: Character, size: CGSize) {
+        // Create a circular background for the letter
+        let circleRadius = size.width * 0.3
+        
+        // Main letter background - clean and simple
+        letterBackground = SKShapeNode(circleOfRadius: circleRadius)
+        letterBackground!.fillColor = .white
+        letterBackground!.strokeColor = UIColor(white: 0.85, alpha: 1.0) // Light gray border
+        letterBackground!.lineWidth = 1.0
+        letterBackground!.position = .zero
+        letterBackground!.zPosition = 7
+        self.addChild(letterBackground!)
+        
+        // Add letter with clean appearance
+        letterLabel = SKLabelNode(text: String(letter))
+        letterLabel!.fontColor = .black
+        letterLabel!.fontSize = size.height / 2.8
+        letterLabel!.fontName = "ArialRoundedMTBold"
+        letterLabel!.verticalAlignmentMode = .center
+        letterLabel!.horizontalAlignmentMode = .center
+        letterLabel!.zPosition = 8
+        self.addChild(letterLabel!)
+    }
+
+
+    // Add a more visually interesting letter display
+    private func addEnhancedLetterDisplay(letter: Character, size: CGSize) {
+        // Create a circular background for the letter with enhanced appearance
+        let circleRadius = size.width * 0.3
+        
+        // Inner glow effect (slightly larger circle behind the main one)
+        let innerGlow = SKShapeNode(circleOfRadius: circleRadius + 2)
+        innerGlow.fillColor = .white
+        innerGlow.strokeColor = .white
+        innerGlow.alpha = 0.3
+        innerGlow.position = .zero
+        innerGlow.zPosition = 6
+        self.addChild(innerGlow)
+        
+        // Main letter background
+        letterBackground = SKShapeNode(circleOfRadius: circleRadius)
+        letterBackground!.fillColor = .white
+        
+        // Add a gradient effect to the background
+        let gradient = SKShapeNode(circleOfRadius: circleRadius * 0.85)
+        gradient.fillColor = UIColor(white: 0.95, alpha: 1.0)
+        gradient.strokeColor = .clear
+        gradient.position = CGPoint(x: -circleRadius * 0.15, y: circleRadius * 0.15) // Offset to create gradient effect
+        letterBackground!.addChild(gradient)
+        
+        letterBackground!.strokeColor = UIColor(white: 0.8, alpha: 1.0)
+        letterBackground!.lineWidth = 1.0
+        letterBackground!.position = .zero
+        letterBackground!.zPosition = 7
+        letterBackground!.alpha = 0.95
+        self.addChild(letterBackground!)
+        
+        // Add letter with enhanced appearance
+        letterLabel = SKLabelNode(text: String(letter))
+        letterLabel!.fontColor = .black
+        letterLabel!.fontSize = size.height / 2.8
+        letterLabel!.fontName = "ArialRoundedMTBold"
+        letterLabel!.verticalAlignmentMode = .center
+        letterLabel!.horizontalAlignmentMode = .center
+        letterLabel!.zPosition = 8
+        
+        // Add a subtle shadow to the text
+        letterLabel!.position = CGPoint(x: 1, y: -1)
+        let shadowLabel = letterLabel!.copy() as! SKLabelNode
+        shadowLabel.fontColor = UIColor.black.withAlphaComponent(0.3)
+        shadowLabel.position = CGPoint(x: -1, y: 1)
+        shadowLabel.zPosition = 7.5
+        self.addChild(shadowLabel)
+        
+        self.addChild(letterLabel!)
+    }
+
+    // Helper method to add subtle texture pattern
+    private func addSubtlePattern(to node: SKNode, size: CGSize, cornerRadius: CGFloat, baseColor: UIColor, zPosition: CGFloat) {
+        // Create a node to hold the pattern
+        let patternNode = SKNode()
+        patternNode.zPosition = zPosition
+        
+        // Determine pattern type based on color (for variety)
+        let isStartTile = baseColor.isGreen()
+        let isEndTile = baseColor.isRed()
+        
+        if isStartTile {
+            // For start tiles, add a subtle radial pattern
+            addRadialPattern(to: patternNode, size: size, baseColor: baseColor)
+        } else if isEndTile {
+            // For end tiles, add concentric circles
+            addConcentricPattern(to: patternNode, size: size, baseColor: baseColor)
+        } else {
+            // For regular tiles, add a dot grid pattern
+            addDotPattern(to: patternNode, size: size, baseColor: baseColor)
+        }
+        
+        node.addChild(patternNode)
+    }
+
+    // Add a dot pattern for regular tiles
+    private func addDotPattern(to node: SKNode, size: CGSize, baseColor: UIColor) {
+        let dotSize: CGFloat = 1.5
+        let spacing: CGFloat = 12.0
+        let rows = Int(size.height / spacing) - 1
+        let cols = Int(size.width / spacing) - 1
+        
+        for row in 0..<rows {
+            for col in 0..<cols {
+                if (row + col) % 2 == 0 { // Checkerboard pattern
+                    let dot = SKShapeNode(circleOfRadius: dotSize / 2)
+                    let dotColor = isDarkColor(baseColor) ?
+                        lighten(baseColor, by: 0.3) :
+                        darken(baseColor, by: 0.3)
+                    dot.fillColor = dotColor.withAlphaComponent(0.2)
+                    dot.strokeColor = .clear
+                    
+                    // Position the dot
+                    let x = -size.width/2 + CGFloat(col+1) * spacing
+                    let y = -size.height/2 + CGFloat(row+1) * spacing
+                    dot.position = CGPoint(x: x, y: y)
+                    
+                    node.addChild(dot)
+                }
+            }
+        }
+    }
+
+    // Add a radial pattern for start tiles
+    private func addRadialPattern(to node: SKNode, size: CGSize, baseColor: UIColor) {
+        let center = CGPoint.zero
+        let maxRadius = min(size.width, size.height) / 2
+        
+        for radius in stride(from: maxRadius * 0.2, to: maxRadius * 0.8, by: maxRadius * 0.15) {
+            let circle = SKShapeNode(circleOfRadius: radius)
+            circle.position = center
+            circle.fillColor = .clear
+            circle.strokeColor = lighten(baseColor, by: 0.1).withAlphaComponent(0.15)
+            circle.lineWidth = 1.0
+            node.addChild(circle)
+        }
+    }
+
+    // Add concentric pattern for end tiles
+    private func addConcentricPattern(to node: SKNode, size: CGSize, baseColor: UIColor) {
+        let maxSize = min(size.width, size.height) * 0.8
+        
+        for i in 0..<3 {
+            let squareSize = maxSize * (1.0 - CGFloat(i) * 0.25)
+            let square = SKShapeNode(rectOf: CGSize(width: squareSize, height: squareSize), cornerRadius: squareSize * 0.1)
+            square.fillColor = .clear
+            square.strokeColor = lighten(baseColor, by: 0.1).withAlphaComponent(0.15)
+            square.lineWidth = 1.0
+            node.addChild(square)
+        }
+    }
+    
     // MARK: - Drawing Methods
     
-    private func drawPipe(type: PipeType, size: CGSize) {
-        let halfWidth = size.width / 2
-        let halfHeight = size.height / 2
-        // Pipe takes up 40% of tile width for better proportions
-        let pipeWidth = size.width * 0.4
-        
-        pipeNode = SKShapeNode()
-        pipeNode?.strokeColor = pipeColor
-        pipeNode?.lineWidth = pipeLineWidth
-        pipeNode?.lineCap = .round  // Rounded ends
-        pipeNode?.lineJoin = .round // Rounded corners
-        pipeNode?.fillColor = .clear // No fill, just the stroke
-        pipeNode?.zPosition = 5
-        
-        // The path for the pipe shape
-        let path = UIBezierPath()
-        let insetFactor: CGFloat = 0.3 // How far to inset the pipe from the edge
-        
-        switch type {
-        case .straight(let direction):
-            if direction == .up || direction == .down {
-                // Vertical pipe
-                let topPoint = CGPoint(x: 0, y: halfHeight * (1 - insetFactor))
-                let bottomPoint = CGPoint(x: 0, y: -halfHeight * (1 - insetFactor))
-                path.move(to: bottomPoint)
-                path.addLine(to: topPoint)
+    private func drawPipe(type: PipeType, size: CGSize, isExtended: Bool) {
+            let halfWidth = size.width / 2
+            let halfHeight = size.height / 2
+            let pipeWidth = size.width * 0.75
+            
+            // Use different inset factors depending on if we're drawing contained or extended pipes
+            let insetFactor = isExtended ? extendedInsetFactor : containedInsetFactor
+            
+            if isExtended {
+                // For extended state, we'll use the extendedPipeNode
+                extendedPipeNode?.removeFromParent() // Remove if exists
+                extendedPipeNode = SKShapeNode()
+                extendedPipeNode?.strokeColor = pipeColor
+                extendedPipeNode?.lineWidth = pipeLineWidth
+                extendedPipeNode?.lineCap = .butt
+                extendedPipeNode?.lineJoin = .round
+                extendedPipeNode?.fillColor = .clear
+                extendedPipeNode?.zPosition = 5
+                extendedPipeNode?.isHidden = true // Hide initially
+                
+                // Draw extended pipe
+                createPipePath(type: type, size: size, insetFactor: insetFactor, node: extendedPipeNode!)
+                self.addChild(extendedPipeNode!)
             } else {
-                // Horizontal pipe
-                let leftPoint = CGPoint(x: -halfWidth * (1 - insetFactor), y: 0)
-                let rightPoint = CGPoint(x: halfWidth * (1 - insetFactor), y: 0)
-                path.move(to: leftPoint)
-                path.addLine(to: rightPoint)
+                // For contained state, we'll use the regular pipeNode
+                pipeNode?.removeFromParent() // Remove if exists
+                pipeNode = SKShapeNode()
+                pipeNode?.strokeColor = pipeColor
+                pipeNode?.lineWidth = pipeLineWidth
+                pipeNode?.lineCap = .butt
+                pipeNode?.lineJoin = .round
+                pipeNode?.fillColor = .clear
+                pipeNode?.zPosition = 5
+                
+                // Draw contained pipe
+                createPipePath(type: type, size: size, insetFactor: insetFactor, node: pipeNode!)
+                self.addChild(pipeNode!)
+            }
+        }
+        
+        // Create the extended pipe (initially hidden)
+        private func createExtendedPipe(type: PipeType, size: CGSize) {
+            drawPipe(type: type, size: size, isExtended: true)
+        }
+        
+        // Helper method to create the pipe path
+        private func createPipePath(type: PipeType, size: CGSize, insetFactor: CGFloat, node: SKShapeNode) {
+            let halfWidth = size.width / 2
+            let halfHeight = size.height / 2
+            let pipeWidth = size.width * 0.75
+            
+            
+            
+            let path = UIBezierPath()
+            
+            switch type {
+            case .straight(let direction):
+                if direction == .up || direction == .down {
+                    // Vertical pipe - draw from bottom to top
+                    let bottomY = -halfHeight * (1 - insetFactor)
+                    let topY = halfHeight * (1 - insetFactor)
+                    path.move(to: CGPoint(x: 0, y: bottomY))
+                    path.addLine(to: CGPoint(x: 0, y: topY))
+                } else {
+                    // Horizontal pipe - draw from left to right
+                    let leftX = -halfWidth * (1 - insetFactor)
+                    let rightX = halfWidth * (1 - insetFactor)
+                    path.move(to: CGPoint(x: leftX, y: 0))
+                    path.addLine(to: CGPoint(x: rightX, y: 0))
+                }
+                
+            case .elbow(let dir1, let dir2):
+                // Get endpoints for both directions
+                let point1 = getElbowEndpoint(for: dir1, size: size, insetFactor: insetFactor)
+                let point2 = getElbowEndpoint(for: dir2, size: size, insetFactor: insetFactor)
+                
+                // Draw from first endpoint through center to second endpoint
+                path.move(to: point1)
+                path.addLine(to: CGPoint.zero)  // Center point
+                path.addLine(to: point2)
+                
+            case .start(let direction):
+                // Start cap - draw from center to edge in the given direction
+                let edgePoint = getElbowEndpoint(for: direction, size: size, insetFactor: insetFactor)
+                path.move(to: CGPoint.zero)
+                path.addLine(to: edgePoint)
+                
+                // Add a filled circle at the center for the start bubble
+                let startNode = SKShapeNode(circleOfRadius: pipeWidth / 2)
+                startNode.fillColor = pipeColor
+                startNode.strokeColor = pipeColor
+                startNode.position = CGPoint.zero
+                startNode.zPosition = 4
+                if node == pipeNode {
+                    self.addChild(startNode)
+                } else {
+                    // For extended pipe, add a separate bubble
+                    let extendedStartNode = startNode.copy() as! SKShapeNode
+                    extendedStartNode.isHidden = true // Initially hidden
+                    node.userData = NSMutableDictionary()
+                    node.userData?.setValue(extendedStartNode, forKey: "startBubble")
+                    self.addChild(extendedStartNode)
+                }
+                
+            case .end(let direction):
+                // End cap - draw from edge to center in the given direction
+                let edgePoint = getElbowEndpoint(for: direction, size: size, insetFactor: insetFactor)
+                path.move(to: edgePoint)
+                path.addLine(to: CGPoint.zero)
+                
+                // Add a filled circle at the center for the end bubble
+                let endNode = SKShapeNode(circleOfRadius: pipeWidth / 2)
+                endNode.fillColor = pipeColor
+                endNode.strokeColor = pipeColor
+                endNode.position = CGPoint.zero
+                endNode.zPosition = 4
+                if node == pipeNode {
+                    self.addChild(endNode)
+                } else {
+                    // For extended pipe, add a separate bubble
+                    let extendedEndNode = endNode.copy() as! SKShapeNode
+                    extendedEndNode.isHidden = true // Initially hidden
+                    node.userData = NSMutableDictionary()
+                    node.userData?.setValue(extendedEndNode, forKey: "endBubble")
+                    self.addChild(extendedEndNode)
+                }
             }
             
-        case .elbow(let dir1, let dir2):
-            // Corner pipe
-            let startPoint = getEndpointForDirection(dir1.opposite, size: size, insetFactor: insetFactor)
-            let endPoint = getEndpointForDirection(dir2.opposite, size: size, insetFactor: insetFactor)
-            
-            path.move(to: startPoint)
-            // For smoother corners, we use quadratic curves instead of straight lines
-            let controlPoint = CGPoint.zero // Center of tile
-            
-            // Draw the path with a quadratic curve for smoother corners
-            path.move(to: startPoint)
-            path.addLine(to: controlPoint)
-            path.addLine(to: endPoint)
-            
-        case .start(let direction):
-            // Start cap - one opening (from center to edge)
-            let centerPoint = CGPoint.zero
-            let edgePoint = getEndpointForDirection(direction.opposite, size: size, insetFactor: insetFactor)
-            
-            // Draw a line from center to the edge
-            path.move(to: centerPoint)
-            path.addLine(to: edgePoint)
-            
-            // Add a filled circle at the center for the start bubble
-            let startNode = SKShapeNode(circleOfRadius: pipeWidth / 2)
-            startNode.fillColor = pipeColor
-            startNode.strokeColor = pipeColor
-            startNode.position = centerPoint
-            startNode.zPosition = 4
-            self.addChild(startNode)
-            
-        case .end(let direction):
-            // End cap - one opening (from edge to center)
-            let centerPoint = CGPoint.zero
-            let edgePoint = getEndpointForDirection(direction.opposite, size: size, insetFactor: insetFactor)
-            
-            // Draw a line from the edge to center
-            path.move(to: edgePoint)
-            path.addLine(to: centerPoint)
-            
-            // Add a filled circle at the center for the end bubble
-            let endNode = SKShapeNode(circleOfRadius: pipeWidth / 2)
-            endNode.fillColor = pipeColor
-            endNode.strokeColor = pipeColor
-            endNode.position = centerPoint
-            endNode.zPosition = 4
-            self.addChild(endNode)
+            // Set the path for the node
+            node.path = path.cgPath
         }
         
-        pipeNode?.path = path.cgPath
-        self.addChild(pipeNode!)
-    }
+        private func getElbowEndpoint(for direction: PipeDirection, size: CGSize, insetFactor: CGFloat) -> CGPoint {
+            let halfWidth = size.width / 2
+            let halfHeight = size.height / 2
+            
+            // For each direction, return the point on the edge of the tile in that direction
+            switch direction {
+            case .up:
+                return CGPoint(x: 0, y: halfHeight * (1 - insetFactor))
+            case .down:
+                return CGPoint(x: 0, y: -halfHeight * (1 - insetFactor))
+            case .left:
+                return CGPoint(x: -halfWidth * (1 - insetFactor), y: 0)
+            case .right:
+                return CGPoint(x: halfWidth * (1 - insetFactor), y: 0)
+            }
+        }
     
-    private func getEndpointForDirection(_ direction: PipeDirection, size: CGSize, insetFactor: CGFloat) -> CGPoint {
-        let halfWidth = size.width / 2
-        let halfHeight = size.height / 2
+    // MARK: - Pipe Extension Animation
         
-        switch direction {
-        case .up:
-            return CGPoint(x: 0, y: halfHeight * (1 - insetFactor))
-        case .down:
-            return CGPoint(x: 0, y: -halfHeight * (1 - insetFactor))
-        case .left:
-            return CGPoint(x: -halfWidth * (1 - insetFactor), y: 0)
-        case .right:
-            return CGPoint(x: halfWidth * (1 - insetFactor), y: 0)
+        func animateExtendPipes(duration: TimeInterval = 0.5, completion: @escaping () -> Void) {
+            guard !isObstacle, !isExtended, let pipeType = self.pipeType else {
+                completion()
+                return
+            }
+            
+            // Show the extended pipe node
+            extendedPipeNode?.isHidden = false
+            extendedPipeNode?.alpha = 0
+            
+            // Start the fade animation
+            let fadeIn = SKAction.fadeIn(withDuration: duration)
+            let fadeOut = SKAction.fadeOut(withDuration: duration)
+            
+            // Also handle bubble nodes for start/end pipes
+            if case .start = pipeType, let startBubble = extendedPipeNode?.userData?.value(forKey: "startBubble") as? SKShapeNode {
+                startBubble.isHidden = false
+                startBubble.alpha = 0
+                startBubble.run(fadeIn)
+            } else if case .end = pipeType, let endBubble = extendedPipeNode?.userData?.value(forKey: "endBubble") as? SKShapeNode {
+                endBubble.isHidden = false
+                endBubble.alpha = 0
+                endBubble.run(fadeIn)
+            }
+            
+            // Run animations simultaneously
+            let group = SKAction.group([
+                SKAction.run { self.extendedPipeNode?.run(fadeIn) },
+                SKAction.run { self.pipeNode?.run(fadeOut) }
+            ])
+            
+            self.run(group) {
+                // Update state
+                self.isExtended = true
+                
+                // Update liquid path to match extended pipe
+                self.updateLiquidForExtendedPipe()
+                
+                completion()
+            }
         }
-    }
     
     // MARK: - Liquid Animation Setup
     
     private func setupLiquidNode(for pipeType: PipeType, size: CGSize, cornerRadius: CGFloat) {
-        // Create the liquid node (initially hidden)
-        liquidNode = SKShapeNode()
-        liquidNode?.fillColor = .clear
-        liquidNode?.strokeColor = liquidColor
-        liquidNode?.lineWidth = pipeLineWidth * 0.8 // Slightly thinner than the pipe
-        liquidNode?.lineCap = .round
+            // Remove any existing liquid node
+            liquidNode?.removeFromParent()
+            
+            // Create a new liquid node (initially hidden)
+            liquidNode = SKShapeNode()
+            liquidNode?.fillColor = .clear
+            liquidNode?.strokeColor = liquidColor
+            liquidNode?.lineWidth = pipeLineWidth * 0.8
+            liquidNode?.lineCap = .butt
         liquidNode?.lineJoin = .round
-        liquidNode?.alpha = 0.9
-        liquidNode?.zPosition = 6 // Above the pipe but below the letter
-        liquidNode?.isHidden = true
+            liquidNode?.alpha = 0.0
+            liquidNode?.zPosition = 6 // Above the pipe but below the letter
+            liquidNode?.isHidden = true
+            
+            // Initially match the contained pipe path
+            liquidNode?.path = pipeNode?.path
+            
+            self.addChild(liquidNode!)
+        }
         
-        // Create the path that matches the pipe path
-        liquidNode?.path = pipeNode?.path
+        // Update liquid to match extended pipe path
+        private func updateLiquidForExtendedPipe() {
+            liquidNode?.path = extendedPipeNode?.path
+        }
         
-        self.addChild(liquidNode!)
-    }
-    
-    // MARK: - Liquid Animation
-    
-    func fillWithLiquid(duration: TimeInterval = 0.6, completion: @escaping () -> Void) {
+        // MARK: - Liquid Animation
+        
+    func fillWithLiquid(duration: TimeInterval = 0.3, completion: @escaping () -> Void) {
         guard !isObstacle, let pipeType = self.pipeType else {
             completion()
             return
         }
+        
+        // Make sure the letter and its background remain visible during animation
+        letterBackground?.zPosition = 15 // Above the liquid
+        letterLabel?.zPosition = 16      // Above everything
         
         liquidNode?.isHidden = false
         liquidNode?.removeAllActions()
@@ -283,10 +612,10 @@ class PipeTile: SKSpriteNode {
         // For start/end pipe types, we add a center bubble animation
         if case .start = pipeType {
             // Create a bubble at the center for start pipe
-            addBubbleAnimation(duration: duration)
+            addBubbleAnimation(duration: duration, pipeType: pipeType)
         } else if case .end = pipeType {
             // Create a bubble at the center for end pipe
-            addBubbleAnimation(duration: duration)
+            addBubbleAnimation(duration: duration, pipeType: pipeType)
         }
         
         // Run the animation
@@ -294,21 +623,63 @@ class PipeTile: SKSpriteNode {
             completion()
         }
     }
-
-    // Helper method to create the bubble animation
-    private func addBubbleAnimation(duration: TimeInterval) {
-        // Create a bubble at the center
-        let bubbleNode = SKShapeNode(circleOfRadius: pipeLineWidth * 0.4)
-        bubbleNode.fillColor = liquidColor
-        bubbleNode.strokeColor = liquidColor
-        bubbleNode.position = .zero
-        bubbleNode.zPosition = 7
-        bubbleNode.alpha = 0
-        self.addChild(bubbleNode)
         
-        // Animate the bubble
-        let bubbleFadeIn = SKAction.fadeIn(withDuration: duration * 0.5)
-        bubbleNode.run(bubbleFadeIn)
+        // Helper method to create the bubble animation
+    private func addBubbleAnimation(duration: TimeInterval, pipeType: PipeType) {
+        // We'll create a liquid bubble that preserves the pipe bubble appearance
+        
+        // First, create a liquid-filled bubble that's slightly smaller than the pipe bubble
+        let innerRadius = pipeLineWidth * 0.6 // Smaller than the pipe bubble
+        let liquidBubble = SKShapeNode(circleOfRadius: innerRadius)
+        liquidBubble.fillColor = liquidColor
+        liquidBubble.strokeColor = .clear // No stroke on the inner bubble
+        liquidBubble.position = .zero
+        liquidBubble.zPosition = 7
+        liquidBubble.alpha = 0
+        self.addChild(liquidBubble)
+        
+        // Create an outer ring to maintain the pipe appearance
+        let outerRadius = pipeLineWidth * 0.7 // Same size as the original pipe bubble
+        let bubbleOutline = SKShapeNode(circleOfRadius: outerRadius)
+        bubbleOutline.fillColor = .clear
+        bubbleOutline.strokeColor = pipeColor
+        bubbleOutline.lineWidth = 3.0
+        bubbleOutline.position = .zero
+        bubbleOutline.zPosition = 8
+        self.addChild(bubbleOutline)
+        
+        // Animate the liquid bubble
+        let bubbleFadeIn = SKAction.fadeIn(withDuration: duration * 0.2)
+        liquidBubble.run(bubbleFadeIn)
+    }
+        
+        // Helper to reset to contained state if needed (e.g., when moving a tile from the grid back to tray)
+        func resetToContainedState() {
+            if isExtended {
+                // Hide extended pipe
+                extendedPipeNode?.isHidden = true
+                
+                // Show contained pipe
+                pipeNode?.alpha = 1.0
+                pipeNode?.isHidden = false
+                
+                // Reset liquid path
+                liquidNode?.path = pipeNode?.path
+                liquidNode?.isHidden = true
+                liquidNode?.alpha = 0
+                
+                // Handle bubbles
+                if let pipeType = self.pipeType {
+                    if case .start = pipeType, let startBubble = extendedPipeNode?.userData?.value(forKey: "startBubble") as? SKShapeNode {
+                        startBubble.isHidden = true
+                    } else if case .end = pipeType, let endBubble = extendedPipeNode?.userData?.value(forKey: "endBubble") as? SKShapeNode {
+                        endBubble.isHidden = true
+                    }
+                }
+                
+                isExtended = false
+            }
+        }
     }
     
     // Helper to calculate the total length of a path
@@ -342,7 +713,7 @@ class PipeTile: SKSpriteNode {
         
         return max(pathLength, 10.0) // Ensure we have at least some length
     }
-}
+
 
 struct GridPosition {
     var row: Int
@@ -404,9 +775,8 @@ class GameScene: SKScene {
         let size = tileSize()
         for row in 0..<numGridRows {
             for column in 0..<numGridColumns {
-                let tile = SKShapeNode(rectOf: size, cornerRadius: 4.0)
-                tile.fillColor = SKColor.lightGray
-                tile.strokeColor = SKColor.gray
+                // Create an enhanced tile with texture and subtle effects
+                let tile = createEnhancedGridTile(size: size, cornerRadius: 4.0)
                 
                 // Calculate position with padding included
                 let x = size.width * CGFloat(column) + size.width / 2 + 10 * CGFloat(column) + gridPadding
@@ -417,6 +787,37 @@ class GameScene: SKScene {
                 self.addChild(tile)
             }
         }
+    }
+    
+    func createEnhancedGridTile(size: CGSize, cornerRadius: CGFloat) -> SKNode {
+        // Create the container node
+        let container = SKNode()
+        
+        // Create the main background with rounded corners
+        let background = SKShapeNode(rectOf: size, cornerRadius: cornerRadius)
+        background.fillColor = UIColor(red: 0.85, green: 0.85, blue: 0.87, alpha: 1.0) // Light gray with slight blue tint
+        background.strokeColor = UIColor(red: 0.7, green: 0.7, blue: 0.72, alpha: 1.0) // Slightly darker for edge definition
+        background.lineWidth = 1.5
+        
+        // Add a subtle pattern texture
+        let pattern = createSubtleGridPattern(size: size, cornerRadius: cornerRadius)
+        pattern.alpha = 0.15 // Very subtle
+        
+        // Add a slight inner shadow effect
+        let innerShadow = createInnerShadow(size: size, cornerRadius: cornerRadius)
+        innerShadow.alpha = 0.2 // Subtle
+        
+        // Add a highlight at the top
+        let highlight = createTopHighlight(size: size, cornerRadius: cornerRadius)
+        highlight.alpha = 0.35 // Subtle glow
+        
+        // Add all elements to the container
+        container.addChild(background)
+        container.addChild(pattern)
+        container.addChild(innerShadow)
+        container.addChild(highlight)
+        
+        return container
     }
 
     // WordList
@@ -479,16 +880,19 @@ class GameScene: SKScene {
 
     
     func resetTilesToOriginalPositions() {
-        // Loop through all child nodes and reset their positions if they are Tiles
-        for node in self.children {
-            if let tile = node as? PipeTile, let originalPosition = tile.originalPosition {
-                tile.position = originalPosition // Reset to the original position
+            // Reset all pipes to contained state
+            resetAllPipesToContainedState()
+            
+            // Move tiles back to original positions
+            for node in self.children {
+                if let tile = node as? PipeTile, let originalPosition = tile.originalPosition {
+                    tile.position = originalPosition
+                }
             }
+            
+            // Update logical grid
+            updateLogicalGridFromVisualPositions()
         }
-
-        // Update the logical grid with the original positions of the tiles
-        updateLogicalGridFromVisualPositions()
-    }
     
     // Add show word button
     func addShowWordButton() {
@@ -524,6 +928,32 @@ class GameScene: SKScene {
         newGameButton.name = "newGameButton"
         self.addChild(newGameButton)
     }
+    
+    func processDroppedTile(_ tile: PipeTile, at location: CGPoint) {
+            if let newPosition = gridPosition(from: location), moveTile(tile: tile, to: newPosition) {
+                // If moving to grid, ensure pipe is in contained state
+                tile.resetToContainedState()
+                
+                // Update logical grid
+                updateLogicalGridFromVisualPositions()
+                
+                // Check if all tiles have been placed (moved from earlier)
+                if unplacedTiles.isEmpty {
+                    // Let's automatically check the solution now
+                    if checkSolution() {
+                        print("Correct solution!")
+                        // Animation happens in checkSolution
+                    } else {
+                        print("Incorrect solution, please try again.")
+                    }
+                }
+            } else if let originalPosition = tile.originalPosition {
+                // If moving failed, reset to original position
+                tile.position = originalPosition
+            }
+
+            tile.zPosition = 0
+        }
 
 
     func startNewGame() {
@@ -542,6 +972,7 @@ class GameScene: SKScene {
 
         // Generate new tiles
         resetGrid()
+        resetAllPipesToContainedState() // Make sure any remaining pipes are in contained state
         generatePath(for: puzzleWord)
         placeTilesWithPipes(for: puzzleWord)
         placeObstacleTiles(count: 5)
@@ -600,54 +1031,93 @@ class GameScene: SKScene {
 
     // MARK: - Pipe system implementation
     
-    // Determine which pipe type should be used based on the word path
     func determinePipeType(for position: GridPosition, in path: [GridPosition]) -> PipeType {
-        // Find the index of this position in the path
+        // Find this position's index in the path
         guard let index = path.firstIndex(where: { $0.row == position.row && $0.column == position.column }) else {
-            return .straight(.up) // Default if not found (shouldn't happen)
+            return .straight(.up) // Default
         }
         
         // First position (start cap)
         if index == 0 {
-            if path.count > 1 {
-                let nextPos = path[1]
-                // Direction FROM this position TO the next (not the other way around)
-                let direction = determineOutgoingDirection(from: position, to: nextPos)
-                return .start(direction)
+            // Get the next position
+            let nextPos = path[1]
+            
+            // Flow moves FROM start TO next position
+            // So we want the pipe opening facing the direction of the next position
+            if nextPos.column > position.column {
+                return .start(.right)
+            } else if nextPos.column < position.column {
+                return .start(.left)
+            } else if nextPos.row > position.row {
+                return .start(.down)
             } else {
-                return .start(.right) // Default direction if there's only one position
+                return .start(.up)
             }
         }
         
         // Last position (end cap)
         if index == path.count - 1 {
+            // Get the previous position
             let prevPos = path[index - 1]
-            // Direction FROM previous position TO this one
-            let direction = determineOutgoingDirection(from: prevPos, to: position)
-            return .end(direction)
+            
+            // Flow moves FROM previous TO end
+            // So we want the pipe opening facing the direction FROM which the flow comes
+            if prevPos.column > position.column {
+                return .end(.right)  // Flow comes from right
+            } else if prevPos.column < position.column {
+                return .end(.left)   // Flow comes from left
+            } else if prevPos.row > position.row {
+                return .end(.down)   // Flow comes from below
+            } else {
+                return .end(.up)     // Flow comes from above
+            }
         }
         
         // Middle positions
         let prevPos = path[index - 1]
         let nextPos = path[index + 1]
         
-        // Direction coming INTO this position (from previous)
-        let inDirection = determineOutgoingDirection(from: prevPos, to: position)
-        // Direction going OUT of this position (to next)
-        let outDirection = determineOutgoingDirection(from: position, to: nextPos)
-        
-        // If the in and out directions are opposites, it's a straight pipe
-        if inDirection.opposite == outDirection {
-            if inDirection == .up || inDirection == .down {
-                return .straight(.up) // Vertical pipe
-            } else {
-                return .straight(.right) // Horizontal pipe
-            }
+        // Determine incoming direction (where flow comes FROM)
+        let inDir: PipeDirection
+        if prevPos.column > position.column {
+            inDir = .right      // Coming from right
+        } else if prevPos.column < position.column {
+            inDir = .left       // Coming from left
+        } else if prevPos.row > position.row {
+            inDir = .down       // Coming from below
+        } else {
+            inDir = .up         // Coming from above
         }
         
-        // Otherwise it's an elbow - note we pass the direction the flow comes IN from
-        // and the direction the flow goes OUT to
-        return .elbow(inDirection.opposite, outDirection)
+        // Determine outgoing direction (where flow goes TO)
+        let outDir: PipeDirection
+        if nextPos.column > position.column {
+            outDir = .right     // Going to right
+        } else if nextPos.column < position.column {
+            outDir = .left      // Going to left
+        } else if nextPos.row > position.row {
+            outDir = .down      // Going down
+        } else {
+            outDir = .up        // Going up
+        }
+        
+        // If incoming and outgoing are opposite, it's a straight pipe
+        if (inDir == .up && outDir == .down) || (inDir == .down && outDir == .up) {
+            return .straight(.up)    // Vertical straight pipe
+        } else if (inDir == .left && outDir == .right) || (inDir == .right && outDir == .left) {
+            return .straight(.right) // Horizontal straight pipe
+        }
+        
+        // Otherwise it's an elbow - specify both openings
+        return .elbow(inDir, outDir)
+    }
+
+    // Simplify and clarify the direction determination
+    func determineDirection(from: GridPosition, to: GridPosition) -> PipeDirection {
+        if to.column > from.column { return .right }
+        else if to.column < from.column { return .left }
+        else if to.row > from.row { return .down } // Grid is 0,0 at top-left
+        else { return .up }
     }
     
     func determineOutgoingDirection(from: GridPosition, to: GridPosition) -> PipeDirection {
@@ -668,28 +1138,12 @@ class GameScene: SKScene {
         }
     }
     
-    // Convert grid direction to PipeDirection
-    func determineDirectionAsPipe(from: GridPosition, to: GridPosition) -> PipeDirection {
-        if to.column > from.column { return .right }
-        else if to.column < from.column { return .left }
-        else if to.row > from.row { return .down }
-        else { return .up }
-    }
-    
-    // Replace original direction method to be compatible with the pipe system
-    func determineDirection(from: GridPosition, to: GridPosition) -> String {
-        if to.column > from.column { return "→" }
-        else if to.row > from.row { return "↓" }
-        else if to.row < from.row { return "↑" }
-        return "←" // Default to left if no other condition is met
-    }
-    
     // Place tiles with pipes for the word
     func placeTilesWithPipes(for word: String) {
         // Predefine hex colors for start, end, and other tiles
         let startTileColor = UIColor(hex: "#54A37D") ?? .green  // Green
         let endTileColor = UIColor(hex: "#E27378") ?? .red     // Red
-        let normalTileColor = UIColor(hex: "#FDE6BD") ?? .white // White
+        let normalTileColor = UIColor(red: 0.85, green: 0.85, blue: 0.87, alpha: 1.0)
         
         var tilesWithPipes: [PipeTile] = []
         let letters = Array(word)
@@ -771,10 +1225,10 @@ class GameScene: SKScene {
         availablePositions.shuffle()
         let obstaclePositions = availablePositions.prefix(count)
 
-        // Place obstacle tiles
+        // Place enhanced obstacle tiles
         for position in obstaclePositions {
-            // Create obstacle tile without any pipe type and mark as obstacle
-            let obstacleTile = PipeTile(letter: nil, color: .brown, size: tileSize(), cornerRadius: 4.0, isObstacle: true)
+            // Create enhanced obstacle tile
+            let obstacleTile = createEnhancedObstacleTile(size: tileSize(), cornerRadius: 4.0)
             obstacleTile.position = positionForGridCell(row: position.row, column: position.column)
             self.addChild(obstacleTile)
             
@@ -784,6 +1238,151 @@ class GameScene: SKScene {
             
             // Add the obstacle tile to the grid
             grid[position.row][position.column] = obstacleTile
+        }
+    }
+    
+    func createEnhancedObstacleTile(size: CGSize, cornerRadius: CGFloat) -> PipeTile {
+        // Create the base obstacle tile
+        let tile = PipeTile(letter: nil, color: .clear, size: size, cornerRadius: cornerRadius, isObstacle: true)
+        
+        // Add a metal/concrete-like background
+        let background = SKShapeNode(rectOf: size, cornerRadius: cornerRadius)
+        background.fillColor = UIColor(red: 0.4, green: 0.35, blue: 0.3, alpha: 1.0) // Brown-gray concrete color
+        background.strokeColor = UIColor(red: 0.3, green: 0.25, blue: 0.2, alpha: 1.0)
+        background.lineWidth = 1.5
+        background.zPosition = 0
+        tile.addChild(background)
+        
+        // Add a concrete/metal texture with rivets
+        let texture = createObstacleTexture(size: size, cornerRadius: cornerRadius)
+        texture.zPosition = 1
+        tile.addChild(texture)
+        
+        return tile
+    }
+    
+    func createSubtleGridPattern(size: CGSize, cornerRadius: CGFloat) -> SKShapeNode {
+        let pattern = SKShapeNode(rectOf: size, cornerRadius: cornerRadius)
+        pattern.fillColor = .clear
+        pattern.strokeColor = .clear
+        
+        // Create a grid of small dots
+        let dotSize: CGFloat = 2.0
+        let spacing: CGFloat = 10.0
+        let rows = Int(size.height / spacing)
+        let cols = Int(size.width / spacing)
+        
+        for row in 0..<rows {
+            for col in 0..<cols {
+                if (row + col) % 2 == 0 { // Checkerboard pattern
+                    let dot = SKShapeNode(circleOfRadius: dotSize / 2)
+                    dot.fillColor = UIColor.black.withAlphaComponent(0.1)
+                    dot.strokeColor = .clear
+                    
+                    // Position the dot
+                    let x = -size.width/2 + CGFloat(col) * spacing + spacing/2
+                    let y = -size.height/2 + CGFloat(row) * spacing + spacing/2
+                    dot.position = CGPoint(x: x, y: y)
+                    
+                    pattern.addChild(dot)
+                }
+            }
+        }
+        
+        return pattern
+    }
+
+    // Create an inner shadow effect for depth
+    func createInnerShadow(size: CGSize, cornerRadius: CGFloat) -> SKShapeNode {
+        let shadow = SKShapeNode(rectOf: CGSize(width: size.width - 4, height: size.height - 4), cornerRadius: cornerRadius - 1)
+        shadow.fillColor = .clear
+        shadow.strokeColor = UIColor.black.withAlphaComponent(0.3)
+        shadow.lineWidth = 4.0
+        shadow.position = CGPoint(x: 1, y: -1) // Offset slightly to create shadow effect
+        return shadow
+    }
+
+    // Create a highlight at the top of the tile for a 3D effect
+    func createTopHighlight(size: CGSize, cornerRadius: CGFloat) -> SKShapeNode {
+        let highlight = SKShapeNode()
+        let path = UIBezierPath()
+        
+        // Create an arc just at the top of the tile
+        let topY = size.height / 2 - cornerRadius
+        let leftX = -size.width / 2 + cornerRadius
+        let rightX = size.width / 2 - cornerRadius
+        
+        path.move(to: CGPoint(x: leftX, y: topY))
+        path.addLine(to: CGPoint(x: rightX, y: topY))
+        
+        highlight.path = path.cgPath
+        highlight.strokeColor = UIColor.white
+        highlight.lineWidth = 2.0
+        
+        return highlight
+    }
+
+    // Create a concrete/metal texture for obstacle tiles
+    func createObstacleTexture(size: CGSize, cornerRadius: CGFloat) -> SKNode {
+        let textureNode = SKNode()
+        
+        // Create an overlay with scratch marks
+        let overlay = SKShapeNode(rectOf: CGSize(width: size.width - 8, height: size.height - 8), cornerRadius: cornerRadius - 1)
+        overlay.fillColor = .clear
+        overlay.strokeColor = .clear
+        
+        // Add some random scratch lines
+        for _ in 0..<5 {
+            let scratch = SKShapeNode()
+            let path = UIBezierPath()
+            
+            // Random starting and ending points
+            let startX = CGFloat.random(in: -size.width/2+10...size.width/2-10)
+            let startY = CGFloat.random(in: -size.height/2+10...size.height/2-10)
+            let endX = CGFloat.random(in: -size.width/2+10...size.width/2-10)
+            let endY = CGFloat.random(in: -size.height/2+10...size.height/2-10)
+            
+            path.move(to: CGPoint(x: startX, y: startY))
+            path.addLine(to: CGPoint(x: endX, y: endY))
+            
+            scratch.path = path.cgPath
+            scratch.strokeColor = UIColor.black.withAlphaComponent(0.2)
+            scratch.lineWidth = CGFloat.random(in: 1.0...2.0)
+            
+            overlay.addChild(scratch)
+        }
+        
+        // Add rivets in the corners for industrial look
+        addRivets(to: textureNode, size: size, cornerRadius: cornerRadius)
+        
+        textureNode.addChild(overlay)
+        return textureNode
+    }
+
+    // Add rivets to the obstacle texture
+    func addRivets(to node: SKNode, size: CGSize, cornerRadius: CGFloat) {
+        let rivetPositions = [
+            CGPoint(x: -size.width/2 + cornerRadius, y: size.height/2 - cornerRadius),
+            CGPoint(x: size.width/2 - cornerRadius, y: size.height/2 - cornerRadius),
+            CGPoint(x: -size.width/2 + cornerRadius, y: -size.height/2 + cornerRadius),
+            CGPoint(x: size.width/2 - cornerRadius, y: -size.height/2 + cornerRadius)
+        ]
+        
+        for position in rivetPositions {
+            let rivet = SKShapeNode(circleOfRadius: 3.0)
+            rivet.fillColor = UIColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 1.0)
+            rivet.strokeColor = UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1.0)
+            rivet.lineWidth = 1.0
+            rivet.position = position
+            
+            // Add a highlight to the rivet for 3D effect
+            let highlight = SKShapeNode(circleOfRadius: 1.0)
+            highlight.fillColor = UIColor.white.withAlphaComponent(0.5)
+            highlight.strokeColor = .clear
+            highlight.position = CGPoint(x: -0.5, y: 0.5)
+            rivet.addChild(highlight)
+            
+            node.addChild(rivet)
         }
     }
     
@@ -806,6 +1405,9 @@ class GameScene: SKScene {
         
         // Check if the constructed word matches the puzzle word
         if currentWord == puzzleWord {
+            // Use the new two-step animation:
+            // 1. First extend pipes
+            // 2. Then animate liquid flow
             animateSolutionWithPipes()
             print("Solution is correct!")
             return true
@@ -929,31 +1531,69 @@ class GameScene: SKScene {
     
     // Modified animation solution to use the pipe-based animation
     func animateSolutionWithPipes() {
-        var index = 0
-        let totalDuration: TimeInterval = 0.6 // Duration for each tile
-        
-        func animateNextTile() {
-            guard index < path.count else { return } // End of path reached
-            
-            let position = path[index]
-            guard let tile = grid[position.row][position.column] as? PipeTile else {
-                index += 1
-                animateNextTile()
-                return
-            }
-            
-            // Animate the liquid flow with the simplified method
-            tile.fillWithLiquid(duration: totalDuration) {
-                index += 1
-                animateNextTile()
+            // 1. First extend all pipes to connect
+            animateExtendPipes() {
+                // 2. Then animate the liquid flow
+                self.animateLiquidFlow()
             }
         }
         
-        // Start a small delay before animation begins
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            animateNextTile() // Start the animation chain
+    func animateExtendPipes(completion: @escaping () -> Void) {
+        var pipeExtensionCount = 0
+        let totalPipeCount = path.count
+        
+        // Extend each pipe in the path
+        for position in path {
+            guard let tile = grid[position.row][position.column] as? PipeTile else { continue }
+            
+            // Use the longer duration
+            tile.animateExtendPipes(duration: 0.5) {
+                pipeExtensionCount += 1
+                
+                // When all pipes are extended, proceed to liquid flow after a longer delay
+                if pipeExtensionCount >= totalPipeCount {
+                    // Add a longer pause before starting the liquid flow
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { // Increased from 0.5 to 1.2
+                        completion()
+                    }
+                }
+            }
         }
     }
+        
+        func animateLiquidFlow() {
+            var index = 0
+            let totalDuration: TimeInterval = 0.3
+            
+            func animateNextTile() {
+                guard index < path.count else { return } // End of path reached
+                
+                let position = path[index]
+                guard let tile = grid[position.row][position.column] as? PipeTile else {
+                    index += 1
+                    animateNextTile()
+                    return
+                }
+                
+                // Animate the liquid flow with the shortened duration
+                tile.fillWithLiquid(duration: totalDuration) {
+                    index += 1
+                    animateNextTile()
+                }
+            }
+            
+            // Start liquid animation
+            animateNextTile()
+        }
+        
+        // Add a reset method to reset pipes to contained state when appropriate
+        func resetAllPipesToContainedState() {
+            self.children.forEach { node in
+                if let tile = node as? PipeTile {
+                    tile.resetToContainedState()
+                }
+            }
+        }
     
     // Debug function to print the current grid layout
     func printGridPath() {
@@ -1033,15 +1673,9 @@ class GameScene: SKScene {
         guard let touch = touches.first, let tile = activeTile else { return }
         let location = touch.location(in: self)
 
-        if let newPosition = gridPosition(from: location), moveTile(tile: tile, to: newPosition) {
-            // Only update the logical grid if the move was successful
-            updateLogicalGridFromVisualPositions()
-        } else if let originalPosition = tile.originalPosition {
-            // If moving to the new position failed, reset to the original position
-            tile.position = originalPosition
-        }
-
-        tile.zPosition = 0 // Reset zPosition if changed
+        // Use our new helper method to process the dropped tile
+        processDroppedTile(tile, at: location)
+        
         activeTile = nil // Stop tracking the tile
     }
 
@@ -1052,5 +1686,21 @@ class GameScene: SKScene {
     
     override func update(_ currentTime: TimeInterval) {
         // Your game's frame-by-frame logic, if needed
+    }
+}
+
+// MARK: - UIColor Extensions
+
+extension UIColor {
+    func isGreen() -> Bool {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return green > 0.5 && green > red * 1.5 && green > blue * 1.5
+    }
+    
+    func isRed() -> Bool {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return red > 0.5 && red > green * 1.5 && red > blue * 1.5
     }
 }
