@@ -90,6 +90,7 @@ class GameViewController: UIViewController {
 
 extension GameViewController: MapSceneDelegate {
     func mapScene(_ scene: MapScene, didSelectPuzzleWithWord word: String, connectionIndex: Int) {
+        print("GameViewController received delegate call to start puzzle with word: \(word)")
         // Transition to game scene with the selected word
         presentGameScene(withWord: word, connectionIndex: connectionIndex)
     }

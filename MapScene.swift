@@ -514,12 +514,10 @@ class MapScene: SKScene {
     
     func startPuzzle(withWord word: String, connectionIndex: Int) {
         // This method would be called to start a puzzle with the given word
+        gameDelegate?.mapScene(self, didSelectPuzzleWithWord: word, connectionIndex: connectionIndex)
         // In a real implementation, this would transition to your GameScene
         print("Starting puzzle with word: \(word), connectionIndex: \(connectionIndex)")
         
-        // For testing purposes, let's simulate completing the connection
-        // In the real game, you'd transition to GameScene instead
-        completeConnection(index: connectionIndex)
     }
     
     // MARK: - Utility Methods

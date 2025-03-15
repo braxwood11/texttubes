@@ -730,7 +730,11 @@ class GameScene: SKScene {
     let topPadding: CGFloat = 80.0 // Padding at top of grid
     var activeTile: PipeTile?
     let snapThreshold: CGFloat = 100.0 // Adjust based on your needs
-    var puzzleWord: String = ""
+    var puzzleWord: String = ""{
+        didSet {
+            print("⚠️ puzzleWord CHANGED from '\(oldValue)' to '\(puzzleWord)'")
+        }
+    }
     var puzzleWordLabel: SKLabelNode?
     var grid: [[PipeTile?]] = [] // Represents the grid where nil indicates an empty square
     var path: [GridPosition] = [] // Path taken by the word through the grid
@@ -743,11 +747,11 @@ class GameScene: SKScene {
     
     override func sceneDidLoad() {
         self.backgroundColor = .white
-        if let words = loadWordsFromFile(), !words.isEmpty {
+       /* if let words = loadWordsFromFile(), !words.isEmpty {
             puzzleWord = words.randomElement() ?? "DEFAULT" // Use a default word if none is found
         } else {
             puzzleWord = "FALLBACK" // Fallback word in case the word list couldn't be loaded
-        }
+        } */
 
         setupGrid()
         addResetButton()
@@ -762,6 +766,7 @@ class GameScene: SKScene {
     
     override func didMove(to view: SKView) {
         // Call your existing setup methods
+        print("GameScene didMove with puzzleWord: \(puzzleWord)")
         
         // Add back button
         setupBackButton()
@@ -977,11 +982,12 @@ class GameScene: SKScene {
 
 
     func startNewGame() {
+        /*
         if let words = loadWordsFromFile(), !words.isEmpty {
             puzzleWord = words.randomElement() ?? "DEFAULT"
         } else {
             puzzleWord = "FALLBACK"
-        }
+        } */
 
         // Clear existing tiles
         self.children.forEach { node in
