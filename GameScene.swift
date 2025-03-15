@@ -735,6 +735,10 @@ class GameScene: SKScene {
     var grid: [[PipeTile?]] = [] // Represents the grid where nil indicates an empty square
     var path: [GridPosition] = [] // Path taken by the word through the grid
     var unplacedTiles: Set<PipeTile> = Set()
+    var connectionIndex: Int = 0
+    weak var gameDelegate: GameSceneDelegate?
+    
+    private var backButton: SKLabelNode?
 
     
     override func sceneDidLoad() {
@@ -751,10 +755,26 @@ class GameScene: SKScene {
         addShowWordButton()
         createPuzzleWordLabel()
         initializeGrid()
-        addCheckSolutionButton()
         
         // Start a new game to generate the initial puzzle
         startNewGame()
+    }
+    
+    override func didMove(to view: SKView) {
+        // Call your existing setup methods
+        
+        // Add back button
+        setupBackButton()
+    }
+    
+    func setupBackButton() {
+        backButton = SKLabelNode(fontNamed: "ArialRoundedMTBold")
+        backButton?.text = "← Back to Map"
+        backButton?.fontSize = 18
+        backButton?.fontColor = .gray
+        backButton?.position = CGPoint(x: 80, y: self.size.height - 40)
+        backButton?.name = "backButton"
+        self.addChild(backButton!)
     }
 
 
@@ -1410,6 +1430,7 @@ class GameScene: SKScene {
             // 2. Then animate liquid flow
             animateSolutionWithPipes()
             print("Solution is correct!")
+            notifyPuzzleCompleted()
             return true
         } else {
             print("Solution does not match the puzzle word. Found: \(currentWord), Expected: \(puzzleWord)")
@@ -1435,15 +1456,39 @@ class GameScene: SKScene {
 
         return true // All tiles are correctly placed
     }
-
-    func addCheckSolutionButton() {
-        let checkButton = SKLabelNode(fontNamed: "Arial")
-        checkButton.text = "Check Solution"
-        checkButton.fontSize = 24
-        checkButton.fontColor = SKColor.blue
-        checkButton.position = CGPoint(x: self.frame.midX, y: self.frame.minY + 100)
-        checkButton.name = "checkSolutionButton"
-        self.addChild(checkButton)
+    
+    func addReturnToMapButton(withSuccess success: Bool) {
+        // Create a back button with attractive styling
+        let buttonWidth: CGFloat = 200
+        let buttonHeight: CGFloat = 50
+        
+        let backButtonNode = SKShapeNode(rectOf: CGSize(width: buttonWidth, height: buttonHeight), cornerRadius: 10)
+        backButtonNode.fillColor = success ? UIColor(hex: "#54A37D") ?? .green : UIColor(hex: "#4F97C7") ?? .blue
+        backButtonNode.strokeColor = .white
+        backButtonNode.lineWidth = 2
+        backButtonNode.position = CGPoint(x: self.size.width / 2, y: self.size.height / 2 - 100)
+        backButtonNode.name = "returnToMapButton"
+        backButtonNode.zPosition = 100 // Above everything else
+        
+        // Add text to the button
+        let buttonText = SKLabelNode(fontNamed: "ArialRoundedMTBold")
+        buttonText.text = success ? "Continue Adventure" : "Return to Map"
+        buttonText.fontSize = 18
+        buttonText.fontColor = .white
+        buttonText.verticalAlignmentMode = .center
+        buttonText.horizontalAlignmentMode = .center
+        buttonText.position = CGPoint.zero
+        backButtonNode.addChild(buttonText)
+        
+        // Add a glow effect for emphasis
+        let glowAction = SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.7, duration: 0.5),
+            SKAction.fadeAlpha(to: 1.0, duration: 0.5)
+        ])
+        backButtonNode.run(SKAction.repeatForever(glowAction))
+        
+        // Add the button to the scene
+        self.addChild(backButtonNode)
     }
     
     func moveTile(tile: PipeTile, to position: GridPosition) -> Bool {
@@ -1595,6 +1640,33 @@ class GameScene: SKScene {
             }
         }
     
+    func notifyPuzzleCompleted() {
+        // Add a delay to allow for completion animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            // Add the return to map button
+            self.addReturnToMapButton(withSuccess: true)
+            
+            // Also show a success message
+            let successMessage = SKLabelNode(fontNamed: "ArialRoundedMTBold")
+            successMessage.text = "Puzzle Completed!"
+            successMessage.fontSize = 30
+            successMessage.fontColor = UIColor(hex: "#54A37D") ?? .green
+            successMessage.position = CGPoint(x: self.size.width / 2, y: self.size.height / 2)
+            successMessage.zPosition = 100
+            successMessage.alpha = 0
+            
+            self.addChild(successMessage)
+            
+            // Fade in with a scale effect
+            let fadeIn = SKAction.fadeIn(withDuration: 0.5)
+            let scaleUp = SKAction.scale(to: 1.2, duration: 0.5)
+            let scaleDown = SKAction.scale(to: 1.0, duration: 0.3)
+            let group = SKAction.group([fadeIn, SKAction.sequence([scaleUp, scaleDown])])
+            
+            successMessage.run(group)
+        }
+    }
+    
     // Debug function to print the current grid layout
     func printGridPath() {
         for row in 0..<numGridRows {
@@ -1624,6 +1696,11 @@ class GameScene: SKScene {
         let nodesAtLocation = self.nodes(at: location)
         
         for node in nodesAtLocation {
+            // Check for the return to map button
+                    if node.name == "returnToMapButton" {
+                        self.gameDelegate?.gameScene(self, didCompletePuzzleWithWord: self.puzzleWord, connectionIndex: self.connectionIndex)
+                        return
+                    }
             if node.name == "checkSolutionButton" {
                 updateLogicalGridFromVisualPositions()
                 // Call the function to check if the solution is correct
@@ -1659,6 +1736,9 @@ class GameScene: SKScene {
                     activeTile = tile
                     tile.zPosition = 1 // Bring the tile to the front
                 }
+            } else if node.name == "backButton" {
+                // Return to map
+                gameDelegate?.gameScene(self, didCancelPuzzle: true)
             }
         }
     }
