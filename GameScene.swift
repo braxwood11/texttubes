@@ -730,9 +730,9 @@ class GameScene: SKScene {
     let topPadding: CGFloat = 80.0 // Padding at top of grid
     var activeTile: PipeTile?
     let snapThreshold: CGFloat = 100.0 // Adjust based on your needs
-    var puzzleWord: String = ""{
+    var puzzleWord: String = "" {
         didSet {
-            print("⚠️ puzzleWord CHANGED from '\(oldValue)' to '\(puzzleWord)'")
+            print("⚠️ puzzleWord CHANGED from '\(oldValue)' to '\(puzzleWord)' (length: \(puzzleWord.count))")
         }
     }
     var puzzleWordLabel: SKLabelNode?
@@ -754,30 +754,37 @@ class GameScene: SKScene {
         } */
 
         setupGrid()
-        addResetButton()
         addNewGameButton()
-        addShowWordButton()
+        // addShowWordButton()
         createPuzzleWordLabel()
         initializeGrid()
         
-        // Start a new game to generate the initial puzzle
-        startNewGame()
     }
     
     override func didMove(to view: SKView) {
         // Call your existing setup methods
-        print("GameScene didMove with puzzleWord: \(puzzleWord)")
+        print("GameScene didMove with puzzleWord: \(puzzleWord) (length: \(puzzleWord.count))")
         
         // Add back button
         setupBackButton()
+        
+        // Only start a new game if we have a valid puzzle word
+        if !puzzleWord.isEmpty {
+            print("Starting new game with word: \(puzzleWord)")
+            startNewGame()
+        } else {
+            print("ERROR: Empty puzzle word in didMove")
+        }
     }
     
     func setupBackButton() {
         backButton = SKLabelNode(fontNamed: "ArialRoundedMTBold")
         backButton?.text = "← Back to Map"
-        backButton?.fontSize = 18
-        backButton?.fontColor = .gray
-        backButton?.position = CGPoint(x: 80, y: self.size.height - 40)
+        backButton?.fontSize = 24
+        backButton?.fontColor = SKColor.red
+        
+        // Position the button on the left, aligned with reset button and at the same level as "New Game"
+        backButton?.position = CGPoint(x: 100, y: self.frame.maxY - 80)
         backButton?.name = "backButton"
         self.addChild(backButton!)
     }
@@ -891,52 +898,33 @@ class GameScene: SKScene {
         return closestCell
     }
     
-    // Add reset button
-    func addResetButton() {
-        let resetButton = SKLabelNode(fontNamed: "Arial")
-        resetButton.text = "Reset Tiles"
-        resetButton.fontSize = 24
-        resetButton.fontColor = SKColor.red
-        // Positioning the button on the left side with a margin
-        resetButton.position = CGPoint(x: resetButton.frame.size.width / 2 + 20, y: self.frame.maxY - 80)
-        resetButton.name = "resetButton"
-        self.addChild(resetButton)
+    func calculateGridBottomY() -> CGFloat {
+        let tileSize = self.tileSize()
+        let lastRowY = self.size.height - (tileSize.height * CGFloat(numGridRows - 1) + tileSize.height / 2 + 10 * CGFloat(numGridRows - 1) + gridPadding + topPadding)
+        // Return a position slightly below the last row (subtract tile height + some padding)
+        return lastRowY - (tileSize.height / 2) - 20
     }
-
-    
-    func resetTilesToOriginalPositions() {
-            // Reset all pipes to contained state
-            resetAllPipesToContainedState()
-            
-            // Move tiles back to original positions
-            for node in self.children {
-                if let tile = node as? PipeTile, let originalPosition = tile.originalPosition {
-                    tile.position = originalPosition
-                }
-            }
-            
-            // Update logical grid
-            updateLogicalGridFromVisualPositions()
-        }
-    
-    // Add show word button
+    /*
     func addShowWordButton() {
-        let showWordButton = SKLabelNode(fontNamed: "Arial")
+        let showWordButton = SKLabelNode(fontNamed: "ArialRoundedMTBold")
         showWordButton.text = "Show Word"
         showWordButton.fontSize = 24
-        showWordButton.fontColor = SKColor.black
-        showWordButton.position = CGPoint(x: self.frame.midX, y: self.frame.minY + 325) // Adjust as needed
-        showWordButton.name = "showWordButton" // Important for identifying the node later
+        showWordButton.fontColor = SKColor.purple  // Changed color for better visibility
+        showWordButton.position = CGPoint(x: self.frame.midX, y: self.frame.minY + 325)
+        showWordButton.name = "showWordButton"
         self.addChild(showWordButton)
     }
-    
+    */
     func createPuzzleWordLabel() {
-        let label = SKLabelNode(fontNamed: "Arial")
-        label.text = puzzleWord // Set the text to the puzzle word
-        label.fontSize = 30
+        let label = SKLabelNode(fontNamed: "ArialRoundedMTBold")
+        label.text = puzzleWord
+        label.fontSize = 36
         label.fontColor = SKColor.orange
-        label.position = CGPoint(x: self.frame.midX, y: self.frame.midY - 70) // Center on screen, adjust as needed
-        label.isHidden = true // Initially hidden
+        
+        // Position below the grid - calculate the bottom of the grid area
+        let gridBottom = calculateGridBottomY() - 20 // Add some padding
+        label.position = CGPoint(x: self.frame.midX, y: gridBottom)
+        label.isHidden = true
         self.addChild(label)
         puzzleWordLabel = label
     }
@@ -988,6 +976,14 @@ class GameScene: SKScene {
         } else {
             puzzleWord = "FALLBACK"
         } */
+        
+        print("startNewGame called with puzzleWord: \(puzzleWord) (length: \(puzzleWord.count))")
+            
+            // Ensure we have a valid word
+            if puzzleWord.isEmpty {
+                print("ERROR: Empty puzzle word in startNewGame")
+                return
+            }
 
         // Clear existing tiles
         self.children.forEach { node in
@@ -997,20 +993,25 @@ class GameScene: SKScene {
         }
 
         // Generate new tiles
-        resetGrid()
-        resetAllPipesToContainedState() // Make sure any remaining pipes are in contained state
-        generatePath(for: puzzleWord)
-        placeTilesWithPipes(for: puzzleWord)
-        placeObstacleTiles(count: 5)
-        
-        // Hide the puzzle word when starting a new game
-        puzzleWordLabel?.isHidden = true
+            resetGrid()
+            resetAllPipesToContainedState()
+            
+            print("Generating path for word: \(puzzleWord) (length: \(puzzleWord.count))")
+            generatePath(for: puzzleWord)
+            
+            placeTilesWithPipes(for: puzzleWord)
+            placeObstacleTiles(count: 5)
+            
+            // Hide the puzzle word when starting a new game
+            puzzleWordLabel?.isHidden = true
     }
     
     // Word Path generation
     func generatePath(for word: String) {
         var attempts = 0
-        let maxAttempts = 15 // Set a maximum to prevent infinite loops
+        let maxAttempts = 30 // Increased maximum attempts
+        
+        print("Generating path for word: \(word) with \(word.count) letters")
 
         while attempts < maxAttempts {
             path.removeAll()
@@ -1048,11 +1049,31 @@ class GameScene: SKScene {
             }
 
             if success && path.count == word.count {
+                print("Successfully generated path with \(path.count) positions")
                 break // Exit the while loop if a successful path is generated
             }
 
             attempts += 1
         }
+        
+        // Ensure we have a valid path even if random generation failed
+        if path.count != word.count {
+            print("Failed to generate valid path after \(attempts) attempts. Creating fallback path.")
+            path.removeAll()
+            
+            // Create a simple path - just go straight across from left to right
+            let startRow = numGridRows / 2 // Middle row
+            
+            // Make sure we don't exceed grid dimensions
+            let pathLength = min(word.count, numGridColumns)
+            
+            for col in 0..<pathLength {
+                path.append(GridPosition(row: startRow, column: col))
+            }
+        }
+        
+        // Final check
+        print("Final path has \(path.count) positions for word with \(word.count) letters")
     }
 
     // MARK: - Pipe system implementation
@@ -1472,7 +1493,9 @@ class GameScene: SKScene {
         backButtonNode.fillColor = success ? UIColor(hex: "#54A37D") ?? .green : UIColor(hex: "#4F97C7") ?? .blue
         backButtonNode.strokeColor = .white
         backButtonNode.lineWidth = 2
-        backButtonNode.position = CGPoint(x: self.size.width / 2, y: self.size.height / 2 - 100)
+        
+        // Move button higher to avoid overlap with word label
+        backButtonNode.position = CGPoint(x: self.size.width / 2, y: self.size.height / 2 - 180)
         backButtonNode.name = "returnToMapButton"
         backButtonNode.zPosition = 100 // Above everything else
         
@@ -1647,17 +1670,24 @@ class GameScene: SKScene {
         }
     
     func notifyPuzzleCompleted() {
-        // Add a delay to allow for completion animation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            // Add the return to map button
+        // First, make the word visible
+        puzzleWordLabel?.text = puzzleWord
+        puzzleWordLabel?.fontColor = UIColor(hex: "#54A37D") ?? .green // Green to indicate success
+        puzzleWordLabel?.isHidden = false
+        
+        // Add a longer delay to allow for completion animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+            // Add the return to map button - position BELOW the word
             self.addReturnToMapButton(withSuccess: true)
             
-            // Also show a success message
+            // Add completion message at the TOP of the screen
             let successMessage = SKLabelNode(fontNamed: "ArialRoundedMTBold")
-            successMessage.text = "Puzzle Completed!"
+            successMessage.text = "Puzzle Complete!"
             successMessage.fontSize = 30
             successMessage.fontColor = UIColor(hex: "#54A37D") ?? .green
-            successMessage.position = CGPoint(x: self.size.width / 2, y: self.size.height / 2)
+            
+            // Position the message at the top, below any navigation buttons
+            successMessage.position = CGPoint(x: self.size.width / 2, y: self.size.height - 550)
             successMessage.zPosition = 100
             successMessage.alpha = 0
             
@@ -1725,14 +1755,11 @@ class GameScene: SKScene {
                 startNewGame()
                 // Optionally hide the puzzle word when starting a new game
                 puzzleWordLabel?.isHidden = true
-            } else if node.name == "resetButton" {
-                // Handle reset button action
-                resetTilesToOriginalPositions()
-            } else if node.name == "showWordButton" {
+          /*  } else if node.name == "showWordButton" {
                 if let label = puzzleWordLabel {
                     label.text = puzzleWord // Update text to the current puzzle word
                     label.isHidden.toggle() // Toggle visibility
-                }
+                } */
             } else if let tile = node as? PipeTile {
                 // Check if the tile is immovable before setting it as active
                 if tile.userData?["immovable"] as? Bool ?? false {

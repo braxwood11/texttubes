@@ -54,7 +54,7 @@ class GameViewController: UIViewController {
             let scene = GameScene(size: view.bounds.size)
             scene.scaleMode = .aspectFill
             
-            // Pass the word to solve
+            // Pass the word to solve - make sure this happens BEFORE presenting the scene
             scene.puzzleWord = word
             scene.connectionIndex = connectionIndex
             
@@ -62,7 +62,7 @@ class GameViewController: UIViewController {
             scene.gameDelegate = self
             
             // Add a debug print
-            print("About to present game scene with word: \(word)")
+            print("About to present game scene with word: \(word) (length: \(word.count))")
             
             // Present the game scene
             view.presentScene(scene, transition: SKTransition.fade(withDuration: 0.5))
@@ -100,15 +100,24 @@ extension GameViewController: MapSceneDelegate {
 
 extension GameViewController: GameSceneDelegate {
     func gameScene(_ scene: GameScene, didCompletePuzzleWithWord word: String, connectionIndex: Int) {
-        // First return to the map scene
+        print("GameScene completed puzzle with word: \(word), connectionIndex: \(connectionIndex)")
+        
+        // Store the completed connection index locally first
+        let completedIndex = connectionIndex
+        
+        // Present the map scene
         presentMapScene()
         
         // Then update the map with the completed connection
-        // We need to do this after a short delay to ensure the map scene is loaded
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let skView = self.view as? SKView,
+        // We need to do this after a delay to ensure the map scene is fully loaded
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            print("Attempting to update map with completed connection: \(completedIndex)")
+            if let skView = self?.view as? SKView,
                let mapScene = skView.scene as? MapScene {
-                mapScene.completeConnection(index: connectionIndex)
+                print("Found map scene, completing connection \(completedIndex)")
+                mapScene.completeConnection(index: completedIndex)
+            } else {
+                print("ERROR: Could not find map scene or complete connection")
             }
         }
     }

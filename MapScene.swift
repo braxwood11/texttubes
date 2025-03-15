@@ -46,12 +46,15 @@ class MapScene: SKScene {
     // MARK: - Scene Lifecycle
     
     override func didMove(to view: SKView) {
+        super.didMove(to: view)
+        
         backgroundColor = .white
         setupMapBackground()
         setupLocations()
         setupConnectionPaths()
         setupSelectionPanel()
         updateAvailableConnections()
+        loadCompletedConnections()
     }
     
     // MARK: - Setup Methods
@@ -388,32 +391,113 @@ class MapScene: SKScene {
     // MARK: - Game State Methods
     
     func completeConnection(index: Int) {
-        // Mark connection as completed
+        print("MapScene.completeConnection called with index: \(index)")
+        
+        // Mark this connection as completed
         completedConnections.insert(index)
         
-        // Find the connection data
-        guard let connection = connections.first(where: { $0.index == index }) else { return }
+        // Find the connection in our data to discover the location
+        if let connection = connections.first(where: { $0.index == index }) {
+            // Update the intermediate location label if needed
+            let toLocationIndex = connection.to
+            if toLocationIndex > 0 && toLocationIndex < 4 {
+                discoveredWords[toLocationIndex] = connection.word
+                if let label = locationLabels[toLocationIndex] {
+                    label.text = connection.word
+                }
+            }
+        }
         
-        // Update the path visualization (switch from dotted to solid line)
-        if let pathContainer = connectionPaths[index],
-           let dottedLine = pathContainer.userData?.value(forKey: "dottedLine") as? SKNode,
-           let solidLine = pathContainer.userData?.value(forKey: "solidLine") as? SKShapeNode {
+        // Update the connection visual state
+        if let connectionNode = childNode(withName: "connection_\(index)") {
+            print("Found connection node: \(connectionNode.name ?? "unnamed")")
             
-            // Fade out dotted line and fade in solid line
-            dottedLine.run(SKAction.fadeOut(withDuration: 0.3))
-            solidLine.run(SKAction.fadeIn(withDuration: 0.3))
+            // Get the dotted and solid lines from userData
+            if let dottedLine = connectionNode.userData?.value(forKey: "dottedLine") as? SKNode,
+               let solidLine = connectionNode.userData?.value(forKey: "solidLine") as? SKShapeNode {
+                
+                // Hide dotted line, show solid line
+                dottedLine.run(SKAction.fadeOut(withDuration: 0.3))
+                solidLine.run(SKAction.sequence([
+                    SKAction.wait(forDuration: 0.1),
+                    SKAction.fadeIn(withDuration: 0.3)
+                ]))
+                
+                // Add a pulse animation to the solid line
+                let pulseAction = SKAction.sequence([
+                    SKAction.fadeAlpha(to: 0.6, duration: 0.5),
+                    SKAction.fadeAlpha(to: 1.0, duration: 0.5)
+                ])
+                solidLine.run(SKAction.repeat(pulseAction, count: 3))
+            }
+        } else {
+            print("Connection node with index \(index) not found")
         }
         
-        // Update the destination location with the word
-        discoveredWords[connection.to] = connection.word
-        if let label = locationLabels[connection.to] {
-            label.text = connection.word
-        }
+        // Save connection progress
+        saveConnectionProgress(index: index)
         
-        // Reveal the location
-        let locationNode = getLocationNode(connection.to)
-        if connection.to != 4 { // Don't change end node color
-            locationNode.run(SKAction.colorize(with: UIColor(white: 0.9, alpha: 1.0), colorBlendFactor: 1.0, duration: 0.3))
+        // Update available connections
+        updateAvailableConnections()
+        
+        // Check if all connections are complete
+        if completedConnections.count == connections.count {
+            showGameComplete()
+        }
+    }
+    
+    // Check if all connections are complete
+    private func checkForGameCompletion() {
+        // Logic to determine if the player has completed all connections
+        // This would depend on how many total connections your game has
+    }
+    
+    // Save completed connection to UserDefaults
+    private func saveConnectionProgress(index: Int) {
+        // Get current completed connections
+        var savedConnections = UserDefaults.standard.array(forKey: "CompletedConnections") as? [Int] ?? []
+        
+        // Add this index if it's not already included
+        if !savedConnections.contains(index) {
+            savedConnections.append(index)
+            UserDefaults.standard.set(savedConnections, forKey: "CompletedConnections")
+            print("Saved connection \(index) to CompletedConnections: \(savedConnections)")
+        }
+    }
+
+    // Load completed connections when the map scene is created
+    func loadCompletedConnections() {
+        let savedConnections = UserDefaults.standard.array(forKey: "CompletedConnections") as? [Int] ?? []
+        print("Loaded completed connections: \(savedConnections)")
+        
+        // Update our local set
+        completedConnections = Set(savedConnections)
+        
+        // Process each completed connection
+        for index in savedConnections {
+            // Find the connection data
+            if let connection = connections.first(where: { $0.index == index }) {
+                // Update the intermediate location label if needed
+                let toLocationIndex = connection.to
+                if toLocationIndex > 0 && toLocationIndex < 4 {
+                    discoveredWords[toLocationIndex] = connection.word
+                    if let label = locationLabels[toLocationIndex] {
+                        label.text = connection.word
+                    }
+                }
+            }
+            
+            // Update the connection visual state
+            if let connectionNode = childNode(withName: "connection_\(index)") {
+                // Get the dotted and solid lines from userData
+                if let dottedLine = connectionNode.userData?.value(forKey: "dottedLine") as? SKNode,
+                   let solidLine = connectionNode.userData?.value(forKey: "solidLine") as? SKShapeNode {
+                    
+                    // Hide dotted line, show solid line
+                    dottedLine.alpha = 0
+                    solidLine.alpha = 1
+                }
+            }
         }
         
         // Update available connections
@@ -421,7 +505,8 @@ class MapScene: SKScene {
         
         // Check if game is complete
         if completedConnections.count == connections.count {
-            showGameComplete()
+            // Don't show completion animation here to avoid showing it every time
+            // the map loads, but we could add a "completed" indicator
         }
     }
     
